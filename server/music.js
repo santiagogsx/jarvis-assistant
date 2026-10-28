@@ -149,6 +149,94 @@ function createMusic(store, browser) {
   // Apple Music web player in Jarvis's browser, after the person signs in there once.
   const appleWebConnected = () => !!store.get().music.appleWeb;
 
+  // Spotify APP (no Spotify account connection needed): find the song's Spotify
+  // link with a web search, open it in the app and press its Play button.
+  async function spotifyAppPlay(query) {
+    const research = require('./research');
+    const found = await research.webSearch(`${query} site:open.spotify.com/track`, store.get(), 6).catch(() => ({ results: [] }));
+    const id = (found.results || []).map(r => (String(r.url).match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?track\/([A-Za-z0-9]{22})/) || [])[1]).find(Boolean);
+    const uri = id ? `spotify:track:${id}` : `spotify:search:${encodeURIComponent(query)}`;
+
+    if (process.platform === 'darwin') {
+      if (!id) return { ok: true, open_url: `https://open.spotify.com/search/${encodeURIComponent(query)}`, note: 'Opened the search in Spotify. Tap play.' };
+      try {
+        await run('osascript', ['-e', `tell application "Spotify" to play track "${uri}"`]);
+        const now = await macApp('Spotify', 'now_playing').catch(() => null);
+        return { ok: true, playing: now?.track || query, app: 'Spotify app' };
+      } catch { return null; }
+    }
+    if (process.platform !== 'win32') return null;
+
+    const b64 = s => Buffer.from(String(s), 'utf8').toString('base64');
+    const script = [
+      "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
+      `$uri = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(uri)}'))`,
+      "$installed = (Test-Path \"$env:APPDATA\\Spotify\\Spotify.exe\") -or (Get-AppxPackage -Name '*Spotify*' -ErrorAction SilentlyContinue)",
+      "if (-not $installed) { '{\"noApp\":true}'; exit }",
+      "Start-Process $uri",
+      "$A = [System.Windows.Automation.AutomationElement]; $S = [System.Windows.Automation.TreeScope]",
+      "function Cond($p, $v) { New-Object System.Windows.Automation.PropertyCondition($p, $v) }",
+      "$pressed = $false",
+      "foreach ($i in 1..30) {",
+      "  $p = Get-Process -Name Spotify -ErrorAction SilentlyContinue | ? { $_.MainWindowHandle -ne 0 } | Select -First 1",
+      "  if ($p) { $win = $A::FromHandle($p.MainWindowHandle)",
+      // The track page's big green Play button is the 'Play' button nearest the top (the player bar's is at the bottom).
+      "    $b = $win.FindAll($S::Descendants, (Cond $A::ControlTypeProperty ([System.Windows.Automation.ControlType]::Button))) | ? { $_.Current.Name -match '^Play' -and $_.Current.BoundingRectangle.Height -gt 0 } | Sort-Object { $_.Current.BoundingRectangle.Y } | Select -First 1",
+      "    if ($b -and $i -gt 4) { $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $pressed = $true; break } }",
+      "  Start-Sleep -Milliseconds 500 }",
+      "@{ pressed = $pressed } | ConvertTo-Json -Compress",
+    ].join('\n');
+    let out;
+    try { out = JSON.parse(await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script])); } catch { return null; }
+    if (out.noApp) return null;
+    if (!out.pressed || !id) return { ok: true, note: id ? 'Opened the song in your Spotify app. Press play.' : 'Opened the search in your Spotify app. Tap play on the song.' };
+    await new Promise(r => setTimeout(r, 1500));
+    const now = await winMedia('now_playing', 'Spotify').catch(() => null);
+    return { ok: true, playing: now?.track ? `${now.track} by ${now.artist}` : query, app: 'Spotify app' };
+  }
+
+  // Apple Music APP on Windows: find the song in Apple's public catalog, open it
+  // in the app with a music:// link, then press the song's own "Play" menu item
+  // through Windows accessibility controls (no mouse, no browser).
+  async function appleAppPlay(query, kind = 'track') {
+    const entity = kind === 'album' ? 'album' : 'song';
+    const term = encodeURIComponent(String(query).slice(0, 120));
+    const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=${entity}&limit=5&country=us`, { signal: AbortSignal.timeout(12000) }).then(r => r.json()).catch(() => null);
+    const hit = res?.results?.[0];
+    if (!hit) return { error: `I couldn't find "${query}" on Apple Music.` };
+    const link = String(hit.trackViewUrl || hit.collectionViewUrl).replace(/^https:\/\//, 'music://');
+    const b64 = s => Buffer.from(String(s || ''), 'utf8').toString('base64');
+    const script = [
+      "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Runtime.WindowsRuntime",
+      `$link = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(link)}'))`,
+      `$want = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(entity === 'song' ? hit.trackName : '')}'))`,
+      "if (-not (Get-AppxPackage -Name 'AppleInc.AppleMusicWin' -ErrorAction SilentlyContinue)) { '{\"noApp\":true}'; exit }",
+      "Start-Process $link",
+      "$A = [System.Windows.Automation.AutomationElement]; $S = [System.Windows.Automation.TreeScope]",
+      "function Cond($p, $v) { New-Object System.Windows.Automation.PropertyCondition($p, $v) }",
+      "$win = $null; foreach ($i in 1..30) { $p = Get-Process -Name AppleMusic -ErrorAction SilentlyContinue | Select -First 1; if ($p) { $win = $A::RootElement.FindFirst($S::Children, (Cond $A::ProcessIdProperty $p.Id)) }; if ($win) { break }; Start-Sleep -Milliseconds 500 }",
+      "if (-not $win) { '{\"opened\":true}'; exit }",
+      "$pressed = $false",
+      // Album (or no track name): the album's big Play button. Song: its row's More → Play "…".
+      "if (-not $want) { Start-Sleep 3; $b = $win.FindAll($S::Descendants, (Cond $A::NameProperty 'Play')) | Select -Last 1; if ($b) { $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $pressed = $true } }",
+      "else { foreach ($i in 1..24) { $row = $win.FindAll($S::Descendants, (Cond $A::ControlTypeProperty ([System.Windows.Automation.ControlType]::ListItem))) | ? { $_.Current.Name -like 'Track *' -and $_.Current.Name.IndexOf($want, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select -First 1; if ($row) { break }; Start-Sleep -Milliseconds 500 }",
+      "  if ($row) { $more = $row.FindFirst($S::Descendants, (Cond $A::NameProperty 'More')); $more.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 900",
+      "    $item = $A::RootElement.FindAll($S::Descendants, (Cond $A::ControlTypeProperty ([System.Windows.Automation.ControlType]::MenuItem))) | ? { $_.Current.ProcessId -eq $win.Current.ProcessId -and $_.Current.Name -match '^Play [\\u201C\"]' } | Select -First 1",
+      "    if ($item) { $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $pressed = $true } } }",
+      "@{ opened = $true; pressed = $pressed } | ConvertTo-Json -Compress",
+    ].join('\n');
+    let out;
+    try { out = JSON.parse(await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script])); }
+    catch { return { ok: false, open_url: hit.trackViewUrl || hit.collectionViewUrl, note: 'Opened it in Apple Music. Tap play.' }; }
+    const label = entity === 'song' ? `${hit.trackName} by ${hit.artistName}` : `${hit.collectionName} by ${hit.artistName}`;
+    if (out.noApp) return null; // no Apple Music app: caller falls back
+    if (!out.pressed) return { ok: true, opened: label, note: 'Opened it in your Apple Music app. Press play on the song.' };
+    // Make sure it really started.
+    await new Promise(r => setTimeout(r, 1500));
+    const now = await winMedia('now_playing', 'Apple').catch(() => null);
+    return { ok: true, playing: now?.track ? `${now.track} by ${now.artist}` : label, app: 'Apple Music app' };
+  }
+
   const asText = s => '"' + String(s).replace(/["\\]/g, '') + '"';
   async function macApp(appName, action, { query, volume } = {}) {
     const tell = body => run('osascript', ['-e', `tell application "${appName}" to ${body}`]);
@@ -194,7 +282,17 @@ function createMusic(store, browser) {
       return { error: service === 'spotify' ? 'Connect Spotify in Settings on the main computer to control playback from here.' : 'Apple Music can only be controlled on the main computer.' };
     }
 
-    // Apple Music, signed in once in Jarvis's browser: search and press play for the person.
+    // Spotify app (when the Spotify account isn't connected): open the song in the app and press play.
+    if (service === 'spotify' && action === 'play' && query && local) {
+      const r = await spotifyAppPlay(query).catch(() => null);
+      if (r) return r;
+    }
+    // Apple Music app on this Windows PC: open the song in the app and press play.
+    if (service === 'apple_music' && action === 'play' && query && process.platform === 'win32') {
+      const r = await appleAppPlay(query, kind).catch(() => null);
+      if (r) return r;
+    }
+    // Otherwise, Apple Music in Jarvis's browser (if the person signed in there once).
     if (service === 'apple_music' && action === 'play' && query && appleWebConnected() && browser) {
       try { return await browser.appleMusicPlay(query); } catch (e) { /* fall through to the app */ }
     }
