@@ -175,6 +175,7 @@
       <button type="button" data-tab="phone"><span>📞</span>Texts &amp; calls</button>
       <button type="button" data-tab="trading"><span>📈</span>Trading</button>
       <button type="button" data-tab="access"><span>📱</span>Phone access</button>
+      <button type="button" data-tab="updates"><span>⬆️</span>Updates <b class="tab-dot" id="update-dot" hidden>●</b></button>
     </nav>
 
     <section class="tab" data-tab="ai">
@@ -324,7 +325,17 @@
       <label>Spotify Client ID <input name="spotifyClientId" spellcheck="false"></label>
       <p class="hint" id="spotify-help"></p>
       <div class="row"><button type="button" id="spotify-connect">Connect Spotify</button><button type="button" id="spotify-disconnect">Disconnect</button><span id="spotify-status" class="muted"></span></div>
-      <p class="hint">Apple Music: on a Mac, Jarvis controls the Music app directly. On Windows it uses the play/pause/skip media keys, and opens songs in Apple Music for you.</p>
+      <h4 class="sub">Apple Music</h4>
+      <div class="update-box">
+        <div class="update-status" id="apple-status">Checking…</div>
+        <div class="muted" id="apple-playing"></div>
+        <div class="row">
+          <button type="button" id="apple-connect" class="primary">Connect Apple Music</button>
+          <button type="button" id="apple-disconnect" hidden>Disconnect</button>
+          <button type="button" id="apple-refresh">Refresh</button>
+        </div>
+      </div>
+      <p class="hint">Press <b>Connect</b> and sign in with your Apple ID in the browser window that opens. You type your password into Apple's own page, so Jarvis never sees it. After that, say "play … on Apple Music" and Jarvis finds it and presses play. Pause, skip and "what's playing?" also work with the Apple Music app on this computer, no sign-in needed. (Apple only lets outside apps link accounts directly through its paid developer program, so this is the free way.)</p>
     </section>
 
     <section class="tab" data-tab="phone" hidden>
@@ -350,6 +361,19 @@
       <label class="check danger-check"><input type="checkbox" name="liveConfirmed"> I understand "Live" uses my real money and I'm responsible for every order I confirm.</label>
     </section>
 
+    <section class="tab" data-tab="updates" hidden>
+      <div class="update-box">
+        <div class="update-version">Installed version: <b id="upd-current">—</b></div>
+        <div class="update-status" id="upd-status">Checking…</div>
+        <div class="bar update-bar" id="upd-bar" hidden><i id="upd-fill"></i></div>
+        <div class="row">
+          <button type="button" id="upd-check">Check for updates</button>
+          <button type="button" id="upd-action" class="primary" hidden></button>
+        </div>
+      </div>
+      <p class="hint">Updates are free. The app checks by itself every few hours; on Windows they download in the background and install when you restart. <a href="https://github.com/santiagogsx/jarvis-assistant/releases" target="_blank" rel="noopener">See what's new</a></p>
+    </section>
+
     <section class="tab" data-tab="access" hidden>
       <label class="check"><input type="checkbox" name="remoteEnabled"> Let phones and other devices use Jarvis</label>
       <label>Passcode for other devices <input name="remotePasscode" type="password" autocomplete="new-password" placeholder="leave empty to keep"></label>
@@ -361,10 +385,17 @@
       <label>Microphone <select name="micId"><option value="">System default</option></select></label>
       <label>Speaker <select name="speakerId"><option value="">System default</option></select></label>
       <p class="hint" id="audio-hint">The OpenAI/ElevenLabs voices and the wake chime use this speaker. The free built-in voice always uses the system default speaker.</p>
-      <label class="check"><input type="checkbox" name="wakeWord"> Wake up when I say "Jarvis" or "Hey Jarvis"</label>
+      <label>How the assistant listens
+        <select name="listenMode">
+          <option value="name">Only when I say his name ("Jarvis" / "Hey Jarvis")</option>
+          <option value="both">When I say his name or press the mic button</option>
+          <option value="button">Only when I press the mic button</option>
+        </select>
+      </label>
       <p class="hint">Listens on this device only, fully offline. Nothing is sent anywhere until Jarvis wakes up. (Phones need the https link.)</p>
       <label class="check"><input type="checkbox" name="deviceMute"> Mute the assistant's voice on this device</label>
       <label class="check"><input type="checkbox" name="voiceFx"> Hologram voice effect (OpenAI/ElevenLabs voices)</label>
+      <label class="check only-desktop"><input type="checkbox" name="keepInTray"> Keep running in the menu bar (Mac) / system tray (Windows) when minimized or closed</label>
       <label class="check only-desktop"><input type="checkbox" name="autoStart"> Start automatically when my computer turns on</label>
       <p class="hint only-desktop" id="autostart-hint" hidden>Available in the installed app.</p>
       <div class="only-desktop monitors">

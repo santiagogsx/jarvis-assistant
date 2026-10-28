@@ -200,6 +200,53 @@ function createBrowser(dataDir, getSettings, onStep) {
     return look(p, 12000);
   }
 
+  // ---- Apple Music web player (the person signs in once in this browser; Jarvis never sees the password)
+  async function appleMusicSignIn() {
+    const p = await ensure();
+    await p.bringToFront();
+    step('Opening Apple Music: sign in with your Apple ID in the browser window…');
+    await p.goto('https://music.apple.com/us/browse', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Bring up Apple's own sign-in box if it's there.
+    const btn = p.getByRole('button', { name: /sign in/i }).first();
+    if (await btn.isVisible().catch(() => false)) await btn.click().catch(() => {});
+    return { ok: true };
+  }
+
+  async function appleMusicSignedIn() {
+    if (!context) return null;
+    const cookies = await context.cookies('https://music.apple.com').catch(() => []);
+    return cookies.some(c => c.name === 'media-user-token' && c.value);
+  }
+
+  async function appleMusicPlay(query) {
+    const p = await ensure();
+    await p.bringToFront();
+    step(`Searching Apple Music for "${String(query).slice(0, 60)}"…`);
+    await p.goto(`https://music.apple.com/us/search?term=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await p.waitForTimeout(2500);
+    // Apple's page changes now and then, so try a few ways to find the first Play button.
+    const selectors = [
+      '[data-testid="top-search-result"] button[aria-label^="Play" i]',
+      'button[data-testid="play-button"]',
+      '[data-testid="track-lockup"] button[aria-label^="Play" i]',
+      'main button[aria-label^="Play" i]',
+    ];
+    for (const sel of selectors) {
+      const b = p.locator(sel).first();
+      if (await b.count().catch(() => 0)) {
+        await b.scrollIntoViewIfNeeded().catch(() => {});
+        await b.locator('xpath=..').hover().catch(() => {});
+        await b.evaluate(HIGHLIGHT).catch(() => {});
+        step('Pressing play…');
+        await b.click({ timeout: 6000, force: true }).catch(() => {});
+        await p.waitForTimeout(2500);
+        const title = await p.locator('[data-testid="lcd"] , .lcd-meta, [class*="lcd"]').first().innerText().catch(() => '');
+        return { ok: true, playing: title.replace(/\s+/g, ' ').trim() || query, note: 'Playing in the Apple Music web player.' };
+      }
+    }
+    return { ok: false, note: 'Apple Music search is open in the browser; tap play on the song you want.' };
+  }
+
   async function close() {
     if (context) await context.close().catch(() => {});
     context = null;
@@ -207,7 +254,7 @@ function createBrowser(dataDir, getSettings, onStep) {
     return { ok: true };
   }
 
-  return { open, search, click, type, scroll, back, read, close };
+  return { open, search, click, type, scroll, back, read, close, appleMusicSignIn, appleMusicSignedIn, appleMusicPlay };
 }
 
 module.exports = { createBrowser };

@@ -1,6 +1,6 @@
 // Desktop app: starts the Jarvis server and shows it in a transparent,
 // frameless "hologram" window that floats over the desktop.
-const { app, BrowserWindow, ipcMain, shell, globalShortcut, session, systemPreferences, safeStorage, Notification, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, globalShortcut, session, systemPreferences, safeStorage, Notification, screen, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -13,7 +13,7 @@ let win;
 let srv;
 
 if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
+app.on('second-instance', () => showWindow());
 
 function createWindow() {
   win = new BrowserWindow({
@@ -43,7 +43,55 @@ function createWindow() {
   win.on('unmaximize', () => win.webContents.send('win-state', { maximized: false }));
   win.on('moved', relayoutSoon); // dragged to another monitor: the other screens swap roles
   win.on('closed', () => { win = null; closeSatellites(); });
+  // Closing or minimizing tucks Jarvis into the menu bar / system tray (he keeps listening).
+  win.on('close', e => {
+    if (!quitting && trayPrefs().keep) { e.preventDefault(); hideToTray(); }
+  });
 }
+
+// ---------------------------------------------------------------- menu bar (Mac) / system tray (Windows)
+let tray = null;
+let quitting = false;
+const trayFile = () => path.join(app.getPath('userData'), 'tray.json');
+function trayPrefs() {
+  try { return { keep: true, ...JSON.parse(fs.readFileSync(trayFile(), 'utf8')) }; } catch { return { keep: true }; }
+}
+
+function showWindow() {
+  if (!win) createWindow();
+  if (process.platform === 'darwin') app.dock?.show();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  for (const w of satellites) if (!w.isDestroyed()) w.showInactive();
+}
+
+function hideToTray() {
+  if (!win) return;
+  win.hide();
+  for (const w of satellites) if (!w.isDestroyed()) w.hide();
+  if (process.platform === 'darwin') app.dock?.hide();
+}
+
+function createTray() {
+  if (tray) return;
+  const isMac = process.platform === 'darwin';
+  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', isMac ? 'trayTemplate.png' : 'tray.png'));
+  if (isMac) img.setTemplateImage(true);
+  tray = new Tray(img);
+  tray.setToolTip('Jarvis');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Show Jarvis', click: showWindow },
+    { label: 'Talk now', click: () => { showWindow(); win.webContents.send('hotkey-listen'); } },
+    { type: 'separator' },
+    { label: 'Check for updates', click: () => { showWindow(); checkForUpdates(); } },
+    { type: 'separator' },
+    { label: 'Quit Jarvis', click: () => { quitting = true; app.quit(); } },
+  ]));
+  if (!isMac) tray.on('click', showWindow); // Windows: click the tray icon to bring Jarvis back
+}
+
+app.on('before-quit', () => { quitting = true; });
 
 // ---------------------------------------------------------------- free updates
 // New versions are published as GitHub Releases. Windows downloads them in the
@@ -51,17 +99,37 @@ function createWindow() {
 const UPDATE_REPO = require('./package.json').updateRepo || '';
 const releasesPage = () => `https://github.com/${UPDATE_REPO}/releases/latest`;
 
-function setupUpdates() {
-  if (!app.isPackaged || !UPDATE_REPO || UPDATE_REPO.startsWith('YOUR_')) return;
-  const tell = data => { if (win && !win.isDestroyed()) win.webContents.send('update', data); };
-  autoUpdater.autoDownload = process.platform !== 'darwin';
-  autoUpdater.on('update-available', info => tell({ state: process.platform === 'darwin' ? 'available' : 'downloading', version: info.version }));
-  autoUpdater.on('update-downloaded', info => tell({ state: 'ready', version: info.version }));
-  autoUpdater.on('error', () => {});
-  const check = () => autoUpdater.checkForUpdates().catch(() => {});
-  setTimeout(check, 15_000);
-  setInterval(check, 4 * 3600 * 1000);
+// Latest update status, shown in Settings → Updates.
+// state: idle | checking | none | available | downloading | ready | error | unavailable
+let updateState = { state: 'idle' };
+const updatesEnabled = () => app.isPackaged && UPDATE_REPO && !UPDATE_REPO.startsWith('YOUR_');
+
+function setUpdate(data) {
+  updateState = { ...updateState, ...data, at: Date.now() };
+  if (win && !win.isDestroyed()) win.webContents.send('update', updateState);
 }
+
+function checkForUpdates() {
+  if (!updatesEnabled()) return setUpdate({ state: 'unavailable' });
+  if (['downloading', 'ready'].includes(updateState.state)) return; // already on its way
+  setUpdate({ state: 'checking' });
+  autoUpdater.checkForUpdates().catch(e => setUpdate({ state: 'error', error: e.message }));
+}
+
+function setupUpdates() {
+  if (!updatesEnabled()) return;
+  autoUpdater.autoDownload = process.platform !== 'darwin';
+  autoUpdater.on('update-available', info => setUpdate({ state: process.platform === 'darwin' ? 'available' : 'downloading', version: info.version, percent: 0 }));
+  autoUpdater.on('update-not-available', () => setUpdate({ state: 'none' }));
+  autoUpdater.on('download-progress', p => setUpdate({ state: 'downloading', percent: Math.round(p.percent) }));
+  autoUpdater.on('update-downloaded', info => setUpdate({ state: 'ready', version: info.version }));
+  autoUpdater.on('error', e => setUpdate({ state: 'error', error: String(e?.message || e).slice(0, 200) }));
+  setTimeout(checkForUpdates, 15_000);
+  setInterval(checkForUpdates, 4 * 3600 * 1000);
+}
+
+ipcMain.handle('update:state', () => ({ ...updateState, current: app.getVersion(), enabled: !!updatesEnabled(), platform: process.platform }));
+ipcMain.on('update:check', () => checkForUpdates());
 
 // ---------------------------------------------------------------- start with the computer
 // On by default for installed copies (first run only); the person can switch it off.
@@ -80,7 +148,7 @@ ipcMain.handle('autostart:set', (_e, on) => {
   return { available: true, on: app.getLoginItemSettings().openAtLogin };
 });
 
-ipcMain.on('update:install', () => autoUpdater.quitAndInstall());
+ipcMain.on('update:install', () => { quitting = true; autoUpdater.quitAndInstall(); });
 ipcMain.on('update:page', () => shell.openExternal(releasesPage()));
 ipcMain.handle('app:version', () => app.getVersion());
 
@@ -154,23 +222,23 @@ app.whenReady().then(async () => {
   win.webContents.once('did-finish-load', relayoutSoon);
   setupUpdates();
   setupAutoStart();
+  createTray();
   for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(ev, relayoutSoon);
 
   globalShortcut.register('CommandOrControl+Shift+J', () => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
+    showWindow();
     win.webContents.send('hotkey-listen');
   });
 
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on('activate', () => showWindow()); // Mac: clicking the Dock icon brings Jarvis back
 }).catch(e => {
   console.error(e);
   app.quit();
 });
 
-ipcMain.on('win:minimize', () => win?.minimize());
+ipcMain.on('win:minimize', () => { if (trayPrefs().keep) hideToTray(); else win?.minimize(); });
+ipcMain.handle('tray:get', () => trayPrefs());
+ipcMain.handle('tray:set', (_e, keep) => { fs.writeFileSync(trayFile(), JSON.stringify({ keep: !!keep })); return trayPrefs(); });
 ipcMain.on('win:maximize', () => { if (!win) return; win.isMaximized() ? win.unmaximize() : win.maximize(); });
 ipcMain.on('win:close', () => win?.close());
 // Background style: 'clear' (see-through), 'frosted' (blurred desktop behind), 'solid'.

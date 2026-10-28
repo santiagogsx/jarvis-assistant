@@ -391,6 +391,7 @@ body[data-mode="listening"] .arc path { stroke: #fff; }
 .mic-switch.off { border-color: rgba(255, 107, 90, .6); background: rgba(255, 107, 90, .15); }
 .mic-switch.off svg { fill: #ffb4aa; }
 .mic-switch.off .slash { display: inline; }
+.mic.name-only { opacity: .55; box-shadow: none; }
 .mic.disabled { border-color: rgba(255, 107, 90, .6); box-shadow: none; background: rgba(255, 107, 90, .08); }
 .mic.disabled svg { fill: #ffb4aa; opacity: .6; }
 
@@ -469,6 +470,17 @@ dialog#settings { width: min(900px, calc(100% - 16px)); max-height: calc(100% - 
   dialog#settings { width: 100%; max-width: 100%; height: 100%; max-height: 100%; margin: 0; }
   #settings-form { height: 100%; max-height: 100%; }
 }
+
+/* Settings → Updates */
+.update-box { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--cyan-faint); background: rgba(95, 227, 255, .04); }
+.update-version { font-size: 17px; }
+.update-version b { color: var(--cyan); }
+.update-status { font-size: 16px; }
+.update-status.good { color: #7dffb2; }
+.update-status.new { color: var(--amber); }
+.update-status.bad { color: #ffb4aa; }
+.update-bar { height: 8px; }
+.tab-dot { color: var(--amber); margin-left: auto; font-size: 12px; }
 
 /* wake word indicator */
 .wake-badge {

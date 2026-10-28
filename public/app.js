@@ -234,12 +234,47 @@
     state.history.push({ role: 'user', content: text });
     state.busy = true;
     setMode('thinking');
+
+    // Stream the answer: words appear as the AI writes them, and each finished
+    // sentence is spoken right away instead of waiting for the whole reply.
+    let el = null, shown = '', pending = '', spoken = 0, capped = false, drawQueued = false;
+    const body = () => el.querySelector('.body');
+    const draw = () => {
+      drawQueued = false;
+      body().innerHTML = render(shown);
+      body().classList.add('typing');
+      log.scrollTop = log.scrollHeight;
+    };
+    const speakReady = (final = false) => {
+      if (state.muted || capped) return;
+      // Take everything up to the last sentence end (or all of it at the end).
+      const m = final ? pending : (pending.match(/^[\s\S]*[.!?:](?=\s)/) || [''])[0];
+      if (!m.trim() || (!final && m.length < 24)) return;
+      pending = pending.slice(m.length);
+      if (/```/.test(m)) return; // don't read code aloud
+      // Speak sentence by sentence, about 450 characters at most; the rest stays on screen.
+      for (const sentence of m.match(/[^.!?:]+[.!?:]*\s*/g) || [m]) {
+        const say = cleanSpeech(sentence);
+        if (!say) continue;
+        if (spoken > 0 && spoken + say.length > 450) { capped = true; queueSpeech('The details are on screen.'); return; }
+        spoken += say.length;
+        queueSpeech(say);
+      }
+    };
     let r;
-    try { r = await api('/ask', { method: 'POST', body: { history: state.history.slice(-24), deviceCity: deviceCity() } }); }
-    catch (e) { r = { error: e.message }; }
+    try {
+      r = await askStream({ history: state.history.slice(-24), deviceCity: deviceCity(), stream: true }, tok => {
+        if (!el) { el = addMsg('jarvis', ''); }
+        shown += tok;
+        pending += tok;
+        if (!drawQueued) { drawQueued = true; requestAnimationFrame(draw); }
+        speakReady();
+      });
+    } catch (e) { r = { error: e.message }; }
     state.busy = false;
     if (r.error) {
       state.history.pop();
+      el?.remove();
       handleActions(r.actions, sys(r.error));
       setMode('error');
       setTimeout(() => { if (document.body.dataset.mode === 'error') setMode('idle'); }, 2500);
@@ -247,10 +282,50 @@
     }
     state.history.push({ role: 'assistant', content: r.reply });
     if (state.history.length > 60) state.history = state.history.slice(-40);
-    const el = addMsg('jarvis', r.reply);
-    window.holo?.typeOut(el.querySelector('.body'), () => { log.scrollTop = log.scrollHeight; });
+    if (!el) {
+      // Nothing streamed (e.g. the free starter AI): show it with the typing effect.
+      el = addMsg('jarvis', r.reply);
+      window.holo?.typeOut(body(), () => { log.scrollTop = log.scrollHeight; });
+      pending = r.reply;
+    } else {
+      // Use the final text (it can include a note added after streaming).
+      if (r.reply.startsWith(shown.trim())) pending += r.reply.slice(shown.trim().length);
+      shown = r.reply;
+      draw();
+      body().classList.remove('typing');
+    }
     handleActions(r.actions, el);
-    await speak(r.reply);
+    speakReady(true);
+    if (!speechBusy() && document.body.dataset.mode === 'thinking') setMode('idle');
+  }
+
+  // POST /api/ask as a stream of JSON lines: {t:'token'} … then {t:'done'} or {t:'error'}.
+  async function askStream(payload, onToken) {
+    const headers = { 'content-type': 'application/json' };
+    if (state.pass) headers['x-jarvis-pass'] = state.pass;
+    let res;
+    try { res = await fetch('/api/ask', { method: 'POST', headers, body: JSON.stringify(payload) }); }
+    catch { throw new Error("I can't reach the main computer. Is Jarvis running there?"); }
+    if (res.status === 401) { await askPasscode('Enter the passcode to continue.'); return askStream(payload, onToken); }
+    if (!res.ok || !res.body) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', result = null;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        let m; try { m = JSON.parse(line); } catch { continue; }
+        if (m.t === 'token') onToken(m.v);
+        else if (m.t === 'done') result = { reply: m.reply, actions: m.actions };
+        else if (m.t === 'error') result = { error: m.error, actions: m.actions };
+      }
+    }
+    return result || { error: 'The answer was cut off. Please try again.' };
   }
 
   function setMode(mode) {
@@ -344,6 +419,59 @@
     return out;
   }
 
+  // Text made ready to read aloud (no links, symbols or code; names said right).
+  function cleanSpeech(text) {
+    let t = String(text)
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/[*_`#>•]/g, '')
+      .replace(/J\.A\.R\.V\.I\.S\./g, 'Jarvis')
+      .split(brand(aiName())).join(aiName());
+    const nm = state.settings?.userName, say = state.settings?.namePronounce;
+    if (nm && say) t = t.replace(new RegExp(`\\b${nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), say);
+    return t.replace(/\s+/g, ' ').trim();
+  }
+
+  // ---- speech queue: sentences play back-to-back; the next one's audio is
+  // made while the current one plays, so there are no pauses.
+  const sq = { items: [], running: false, gen: 0 };
+  const speechBusy = () => sq.running || sq.items.length > 0;
+  function queueSpeech(text) {
+    if (state.muted || !text) return;
+    const engine = state.settings?.voice?.engine || 'system';
+    const item = { text, audio: null };
+    if (engine !== 'system') {
+      item.audio = api('/tts', { method: 'POST', body: { text } }).then(async r => {
+        if (!r.audio) throw new Error(r.error || 'no audio');
+        unlockAudio();
+        const bytes = Uint8Array.from(atob(r.audio), c => c.charCodeAt(0));
+        return actx.decodeAudioData(bytes.buffer);
+      });
+      item.audio.catch(() => {});
+    }
+    sq.items.push(item);
+    if (!sq.running) runSpeech(sq.gen);
+  }
+  async function runSpeech(gen) {
+    sq.running = true;
+    setMode('speaking');
+    while (sq.items.length && gen === sq.gen) {
+      const item = sq.items.shift();
+      try {
+        if (item.audio) await playBuffer(await item.audio, item.text);
+        else await speakSystem(item.text);
+      } catch (e) {
+        if (!state.warnedVoice) { state.warnedVoice = true; sys(`Premium voice unavailable (${e.message}). Using the built-in voice.`); }
+        if (gen === sq.gen) await speakSystem(item.text);
+      }
+    }
+    if (gen === sq.gen) {
+      sq.running = false;
+      if (document.body.dataset.mode === 'speaking') setMode(state.busy ? 'thinking' : 'idle');
+    }
+  }
+
   function speechText(text) {
     let t = String(text)
       .replace(/```[\s\S]*?```/g, ' (code on screen) ')
@@ -363,6 +491,9 @@
   }
 
   function stopSpeaking() {
+    sq.gen++;
+    sq.items = [];
+    sq.running = false;
     try { speechSynthesis.cancel(); } catch {}
     if (audioSrc) { try { audioSrc.onended = null; audioSrc.stop(); } catch {} audioSrc = null; }
     viz.analyser = null;
@@ -407,7 +538,11 @@
     if (!r.audio) throw new Error(r.error || 'no audio');
     unlockAudio();
     const bytes = Uint8Array.from(atob(r.audio), c => c.charCodeAt(0));
-    const buffer = await actx.decodeAudioData(bytes.buffer);
+    return playBuffer(await actx.decodeAudioData(bytes.buffer), text);
+  }
+
+  // Play decoded speech through the voice effect + orb analyser, with subtitles.
+  function playBuffer(buffer, text) {
     return new Promise(resolve => {
       const src = actx.createBufferSource();
       src.buffer = buffer;
@@ -485,9 +620,13 @@
     if (on) setMode('listening');
   }
 
-  async function toggleListen() {
+  async function toggleListen(fromWake = false) {
     if (state.listening) return stopListening();
     if (state.busy) return;
+    // "Only when I say his name": the mic button/hotkey don't open the mic (unless the wake word can't run here).
+    if (!fromWake && listenMode() === 'name' && window.wake?.running) {
+      return sys(`I'm set to listen only when you say my name. Say "Hey ${aiName()}", or change it in Settings → This device.`);
+    }
     if (state.micOff) return sys(`The microphone is off, so ${aiName()} can't hear you. Tap the crossed-out mic at the top to turn it back on, or type instead.`);
     unlockAudio();
     stopSpeaking();
@@ -549,7 +688,7 @@
   function onWakeWord() {
     if (state.busy || state.listening || document.body.dataset.mode !== 'idle') return;
     chime();
-    setTimeout(toggleListen, 180);
+    setTimeout(() => toggleListen(true), 180);
   }
 
   // Mic off = the microphone is released completely: no wake word, no listening.
@@ -819,6 +958,7 @@
     } else if (ev === 'reminders') renderReminders(data);
     else if (ev === 'reminder-error') sys('Reminder text/call failed: ' + data.message);
     else if (ev === 'tasks') renderTasks(data);
+    else if (ev === 'apple' && data.connected) { sys('✓ Apple Music connected. Try "play some Drake on Apple Music".'); refreshApple(); }
     else if (ev === 'ollama' && state.local) {
       const msg = data.error ? 'Unlimited AI setup failed: ' + data.error : data.done ? '✓ Unlimited AI is ready on this PC' : `Downloading the AI… ${data.progress}%`;
       if ($('#ollama-status')) $('#ollama-status').textContent = msg;
@@ -953,6 +1093,7 @@
     F('musicService').value = s.music.service;
     F('spotifyClientId').value = s.music.spotifyClientId || '';
     $('#spotify-status').textContent = s.spotifyConnected ? 'Connected ✓' : 'Not connected';
+    if (state.local) refreshApple();
     const port = location.port || '7777';
     $('#spotify-help').innerHTML = `Setup once: go to <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> → Create app → add redirect URI <code>http://127.0.0.1:${esc(port)}/api/spotify/callback</code> → tick "Web API" → copy the Client ID here → Save → Connect Spotify. Playback control needs Spotify Premium.`;
     F('myNumber').value = s.phone.myNumber || '';
@@ -970,6 +1111,9 @@
     F('deviceMute').checked = state.muted;
     F('voiceFx').checked = lsGet('jarvis-voicefx', '1') === '1';
     fillAudioDevices();
+    if (desk?.updateState) desk.updateState().then(renderUpdate);
+    else { $('#upd-status').textContent = 'Updates are installed by the Jarvis app on each computer.'; $('#upd-check').hidden = true; }
+    if (desk?.getTray) F('keepInTray').checked = (await desk.getTray()).keep;
     if (desk?.getAutoStart) {
       const a = await desk.getAutoStart();
       F('autoStart').checked = a.on;
@@ -982,8 +1126,8 @@
       F('clickThrough').checked = d.clickThrough;
       $('#monitor-count').textContent = `(${d.count} detected)`;
     }
-    F('wakeWord').checked = wakeWanted();
-    F('wakeWord').disabled = !window.wake?.supported;
+    F('listenMode').value = listenMode();
+    for (const o of F('listenMode').options) o.disabled = o.value !== 'button' && !window.wake?.supported;
     F('glass').value = lsGet('jarvis-glass', '40');
     F('bgStyle').value = lsGet('jarvis-bg', 'clear');
     F('onTop').checked = lsGet('jarvis-ontop') === '1';
@@ -1053,13 +1197,27 @@
     document.body.style.setProperty('--solid', solid.toFixed(2));
   }
 
-  // On by default in the desktop app; phones/browsers opt in (it uses the mic and battery).
-  const wakeWanted = () => lsGet('jarvis-wake', desk ? '1' : '0') === '1';
+  // 'name' = only the wake word opens the mic (default in the desktop app),
+  // 'both' = wake word or mic button, 'button' = mic button only (default on phones, saves battery).
+  function listenMode() {
+    const saved = lsGet('jarvis-listen', '');
+    if (saved) return saved;
+    if (lsGet('jarvis-wake') === '0') return 'button'; // older setting: wake word was switched off
+    return desk ? 'name' : 'button';
+  }
+  const wakeWanted = () => listenMode() !== 'button';
+  function applyListenMode() {
+    const nameOnly = listenMode() === 'name';
+    micBtn.classList.toggle('name-only', nameOnly);
+    if (!state.micOff) micBtn.title = nameOnly ? `Listening only for "${aiName()}"` : 'Talk (Ctrl+Shift+J)';
+  }
 
   async function saveDevice() {
-    if (F('wakeWord').checked !== wakeWanted()) {
-      lsSet('jarvis-wake', F('wakeWord').checked ? '1' : '0');
-      setWake(F('wakeWord').checked);
+    if (F('listenMode').value !== listenMode()) {
+      const before = wakeWanted();
+      lsSet('jarvis-listen', F('listenMode').value);
+      if (wakeWanted() !== before) setWake(wakeWanted());
+      applyListenMode();
     }
     state.muted = F('deviceMute').checked;
     lsSet('jarvis-mute', state.muted ? '1' : '0');
@@ -1073,6 +1231,7 @@
       applySpeaker();
     }
     updateMute();
+    if (desk?.setTray) await desk.setTray(F('keepInTray').checked);
     if (desk?.setAutoStart && !F('autoStart').disabled) await desk.setAutoStart(F('autoStart').checked);
     if (desk?.setDisplays) await desk.setDisplays({ mode: F('displayMode').value, clickThrough: F('clickThrough').checked });
     if (desk) {
@@ -1216,6 +1375,25 @@
     if (desk) desk.openExternal(url); else window.open(url, '_blank');
     sys('Finish the Spotify login in your browser, then come back.');
   };
+  // ---- Apple Music
+  async function refreshApple() {
+    const st = await api('/apple/status').catch(() => null);
+    if (!st) return;
+    $('#apple-status').textContent = st.webConnected ? '✓ Connected: Jarvis can search and play Apple Music for you.' : 'Not connected yet.';
+    $('#apple-status').className = 'update-status ' + (st.webConnected ? 'good' : '');
+    $('#apple-connect').hidden = st.webConnected;
+    $('#apple-disconnect').hidden = !st.webConnected;
+    const p = st.playing;
+    $('#apple-playing').textContent = p?.track ? `${p.status === 'Playing' || p.playing ? '▶ Now playing' : '⏸ Paused'}: ${p.track}${p.artist ? ' · ' + p.artist : ''}` : '';
+  }
+  $('#apple-connect').onclick = async () => {
+    $('#apple-status').textContent = 'Opening Apple Music… sign in with your Apple ID in the browser window.';
+    const r = await api('/apple/connect', { method: 'POST' }).catch(e => ({ error: e.message }));
+    if (r.error) $('#apple-status').textContent = r.error;
+  };
+  $('#apple-disconnect').onclick = async () => { await api('/apple/disconnect', { method: 'POST' }); refreshApple(); };
+  $('#apple-refresh').onclick = refreshApple;
+
   $('#spotify-disconnect').onclick = async () => {
     await api('/spotify/disconnect', { method: 'POST' });
     $('#spotify-status').textContent = 'Not connected';
@@ -1251,6 +1429,50 @@
     if (e.key === 'Escape') { stopSpeaking(); if (state.listening) stopListening(); }
   });
 
+  // ---- free updates: top-bar button + Settings → Updates show the same status
+  let lastUpdate = {};
+  function renderUpdate(u) {
+    if (!u) return;
+    lastUpdate = { ...lastUpdate, ...u };
+    u = lastUpdate;
+    const isMac = u.platform === 'darwin';
+    const top = $('#update-btn'), status = $('#upd-status'), action = $('#upd-action');
+    if (u.current) $('#upd-current').textContent = 'v' + u.current;
+    const msg = {
+      idle: ['Not checked yet.', ''], checking: ['Checking for updates…', ''],
+      none: ['✓ You have the latest version.', 'good'],
+      available: [`New version v${u.version} is available.`, 'new'],
+      downloading: [`Downloading v${u.version || ''}… ${u.percent || 0}%`, 'new'],
+      ready: [`✓ v${u.version} is downloaded and ready to install.`, 'new'],
+      error: [`Couldn't check for updates: ${u.error || 'no connection'}`, 'bad'],
+      unavailable: ['Updates work in the installed app (not in this test copy).', ''],
+    }[u.state] || ['', ''];
+    status.textContent = msg[0];
+    status.className = 'update-status ' + msg[1];
+    $('#upd-bar').hidden = u.state !== 'downloading';
+    $('#upd-fill').style.width = (u.percent || 0) + '%';
+    action.hidden = !['available', 'ready'].includes(u.state);
+    action.textContent = u.state === 'ready' ? 'Restart & update now' : isMac ? 'Download update' : 'Download now';
+    action.onclick = u.state === 'ready' ? () => desk.installUpdate() : () => (isMac ? desk.openUpdatePage() : desk.checkUpdate());
+    $('#upd-check').disabled = ['checking', 'downloading'].includes(u.state);
+    $('#update-dot').hidden = !['available', 'downloading', 'ready'].includes(u.state);
+
+    // Small orange button in the top bar while an update is coming or ready.
+    top.hidden = !['available', 'downloading', 'ready'].includes(u.state);
+    top.classList.toggle('busy', u.state === 'downloading');
+    top.textContent = u.state === 'ready' ? `UPDATE v${u.version} · RESTART` : u.state === 'available' ? `v${u.version} AVAILABLE` : `DOWNLOADING ${u.percent || 0}%`;
+    top.onclick = u.state === 'ready' ? () => desk.installUpdate() : () => openSettings('updates');
+    if (u.state === 'ready' && !renderUpdate.told) {
+      renderUpdate.told = true;
+      sys(`Version ${u.version} is ready. Press the orange button at the top (or Settings → Updates) to restart and update.`);
+    }
+  }
+  $('#upd-check').onclick = () => {
+    if (!desk?.checkUpdate) return;
+    renderUpdate({ state: 'checking' });
+    desk.checkUpdate();
+  };
+
   function setupDesktop() {
     document.body.classList.add('desktop');
     $('#win-controls').hidden = false;
@@ -1266,15 +1488,8 @@
     desk.onWindowState(s => document.body.classList.toggle('maximized', s.maximized));
     desk.version?.().then(v => { $('#app-version').textContent = 'v' + v; });
     // Free updates: Windows downloads in the background; Macs get a download link.
-    desk.onUpdate?.(u => {
-      const b = $('#update-btn');
-      b.hidden = false;
-      b.classList.toggle('busy', u.state === 'downloading');
-      b.textContent = u.state === 'ready' ? `UPDATE v${u.version} · RESTART`
-        : u.state === 'available' ? `v${u.version} AVAILABLE · DOWNLOAD` : `DOWNLOADING v${u.version}…`;
-      b.onclick = u.state === 'ready' ? () => desk.installUpdate() : u.state === 'available' ? () => desk.openUpdatePage() : null;
-      if (u.state === 'ready') sys(`Version ${u.version} is ready. Press the orange button at the top to restart and update.`);
-    });
+    desk.onUpdate?.(renderUpdate);
+    desk.updateState?.().then(renderUpdate);
     applyBackground();
     if (lsGet('jarvis-ontop') === '1') desk.setOnTop(true).then(on => $('#pin-btn').classList.toggle('on', !!on));
   }
@@ -1324,6 +1539,7 @@
     const hi = `${greeting()}, ${s.userName || s.userTitle || 'sir'}. All systems are online.`;
     window.holo?.typeOut(addMsg('jarvis', hi).querySelector('.body'));
 
+    applyListenMode();
     if (wakeWanted()) {
       // Browsers only allow the mic/audio after a tap; the desktop app can start right away.
       if (desk) setWake(true);

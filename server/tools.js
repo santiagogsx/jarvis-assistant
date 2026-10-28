@@ -151,6 +151,33 @@ const DEFS = [
   fn('system_status', 'CPU, memory, uptime and OS of the main computer.'),
 ];
 
+// Which tools a request needs, guessed from the recent messages. Fewer tools =
+// a much smaller request = faster (and more accurate) answers, especially on free AIs.
+const CORE_TOOLS = ['get_datetime', 'get_weather', 'web_search', 'read_webpage', 'get_news', 'open_website', 'save_note', 'get_notes',
+  'set_reminder', 'list_reminders', 'add_task', 'list_tasks', 'complete_task', 'copy_to_clipboard'];
+const TOOL_GROUPS = [
+  [/e-?mail|inbox|gmail|outlook|yahoo mail|unread|reply|draft|message from/i, ['check_email', 'search_email', 'read_email', 'draft_email']],
+  [/play|song|music|spotify|apple music|pause|resume|skip|next track|previous|volume|playing|album|playlist|artist|tune/i, ['music']],
+  [/post|tweet|instagram|facebook|tiktok|linkedin|reddit|threads|bluesky|whatsapp|telegram|discord|snapchat|pinterest|twitch|youtube|social|caption/i, ['open_social', 'draft_social_post']],
+  [/buy|order|shop|amazon|ebay|walmart|target|best ?buy|cheap|deal|product|cart|purchase/i, ['find_products', 'prepare_order']],
+  [/stock|shares?\b|crypto|bitcoin|btc|eth|forex|trade|trading|alpaca|oanda|portfolio|position|ticker|eur\/?usd|market/i, ['trading_account', 'market_quote', 'prepare_trade']],
+  [/text me|call me|sms|phone|wake me|wake-?up/i, ['text_me', 'call_me']],
+  [/browser|show me|on (my|the) (computer|screen|pc)|chrome|edge|brave|watch|navigate|click|scroll|go back|look (it )?up on/i, ['browser_search', 'browser_open', 'browser_click', 'browser_type', 'browser_scroll', 'browser_back', 'browser_read', 'browser_close']],
+  [/website|web ?site|landing page|web ?page|homepage|html|css/i, ['build_website', 'read_website_file', 'list_websites', 'browser_open']],
+  [/folder|file|download|move|copy|desktop|documents|downloads|pictures|videos|save (it|this|that)/i, ['make_folder', 'download_file', 'move_file', 'copy_file', 'list_folder', 'open_folder', 'create_file', 'list_files']],
+  [/open |launch|start (the )?app|calculator|notepad|settings app/i, ['open_app']],
+  [/every (day|morning|night|evening|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|routine|schedule|each (morning|day|night)|daily|weekly|weekdays?/i, ['schedule_routine', 'list_routines', 'delete_routine']],
+  [/cancel|delete|remove|clear|undo/i, ['cancel_reminder', 'delete_task', 'delete_note', 'delete_routine']],
+  [/system|cpu|memory|ram|computer status|diagnostic/i, ['system_status']],
+];
+
+function pickTools(history) {
+  const recent = (Array.isArray(history) ? history : []).slice(-6).map(m => String(m.content || '')).join('\n');
+  const names = new Set(CORE_TOOLS);
+  for (const [re, list] of TOOL_GROUPS) if (re.test(recent)) list.forEach(n => names.add(n));
+  return DEFS.filter(d => names.has(d.name));
+}
+
 function createTools({ dataDir, music, browser, trading, sitesUrl, broadcast, notify, getSettings, runRoutine }) {
   const file = name => path.join(dataDir, name);
   const readJSON = (name, fallback) => { try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch { return fallback; } };
@@ -653,7 +680,7 @@ function createTools({ dataDir, music, browser, trading, sitesUrl, broadcast, no
     }
   }
 
-  return { defs: DEFS, run, weather, reminders: publicReminders, systemStatus, tasks: () => tasks, toggleTask, sitesDir, confirmTrade: id => trading.confirm(id) };
+  return { defs: DEFS, pick: pickTools, run, weather, reminders: publicReminders, systemStatus, tasks: () => tasks, toggleTask, sitesDir, confirmTrade: id => trading.confirm(id) };
 }
 
 module.exports = { createTools, SOCIAL };

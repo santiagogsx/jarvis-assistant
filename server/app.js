@@ -91,10 +91,10 @@ async function startServer({ store, port, host, notify }) {
     const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of events) res.write(line);
   };
-  const music = createMusic(store);
+  const browser = createBrowser(store.dataDir, store.get, text => broadcast('tool-step', { text }));
+  const music = createMusic(store, browser);
   const piper = createPiper(store.dataDir, message => broadcast('voice-setup', { message }));
   const voskModels = createVoskModels(store.dataDir, message => broadcast('voice-setup', { message }));
-  const browser = createBrowser(store.dataDir, store.get, text => broadcast('tool-step', { text }));
   const tools = createTools({
     dataDir: store.dataDir, music, browser, trading: createTrading(store.get), broadcast, notify, getSettings: store.get, runRoutine,
     sitesUrl: () => `http://127.0.0.1:${currentPort}`,
@@ -176,19 +176,28 @@ async function startServer({ store, port, host, notify }) {
         return send(res, 200, { port: currentPort, urls: store.get().remote.enabled ? lanUrls(currentPort) : [] });
 
       case 'POST /api/ask': {
-        const { history, deviceCity } = await json();
+        const { history, deviceCity, stream } = await json();
         const s = store.get();
         // A phone with its own location: weather etc. default to where that person is.
         if (typeof deviceCity === 'string' && deviceCity.trim()) s.homeCity = deviceCity.trim().slice(0, 80);
         const actions = [];
         const ctx = { settings: s, local, actions };
+        // Only send the AI the tools this conversation needs: much faster replies.
+        const toolDefs = tools.pick(history);
+        // stream: text goes to the screen word by word (one JSON object per line).
+        const write = obj => res.write(JSON.stringify(obj) + '\n');
+        if (stream) res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
         try {
           const reply = await chat({
-            settings: s, history, systemPrompt: systemPrompt(s, local), toolDefs: tools.defs,
-            runTool: (name, args) => { broadcastTo(res, name); return tools.run(name, args, ctx); },
+            settings: s, history, systemPrompt: systemPrompt(s, local), toolDefs,
+            runTool: (name, args) => { broadcastTo(res, name); if (stream) write({ t: 'tool', name }); return tools.run(name, args, ctx); },
+            onToken: stream ? text => write({ t: 'token', v: text }) : undefined,
           });
-          return send(res, 200, { reply: reply || `Done, ${s.userTitle}.`, actions });
+          const out = { reply: reply || `Done, ${s.userTitle}.`, actions };
+          if (stream) { write({ t: 'done', ...out }); return res.end(); }
+          return send(res, 200, out);
         } catch (e) {
+          if (stream) { write({ t: 'error', error: e.message, actions }); return res.end(); }
           return send(res, 200, { error: e.message, actions });
         }
       }
@@ -310,6 +319,29 @@ async function startServer({ store, port, host, notify }) {
       case 'GET /api/spotify/login':
         if (ownerOnly()) return;
         try { res.writeHead(302, { location: music.loginUrl(currentPort) }); return res.end(); } catch (e) { return send(res, 400, { error: e.message }); }
+      case 'GET /api/apple/status':
+        try { return send(res, 200, await music.appleStatus()); } catch (e) { return send(res, 200, { error: e.message }); }
+      case 'POST /api/apple/connect': {
+        // Opens Apple Music in Jarvis's browser; the person signs in there themselves.
+        // We watch for Apple's sign-in cookie for up to 10 minutes.
+        if (ownerOnly()) return;
+        try { await browser.appleMusicSignIn(); } catch (e) { return send(res, 200, { error: e.message }); }
+        send(res, 200, { ok: true });
+        const started = Date.now();
+        const timer = setInterval(async () => {
+          const ok = await browser.appleMusicSignedIn().catch(() => null);
+          if (ok) {
+            clearInterval(timer);
+            store.update({ music: { appleWeb: true } });
+            broadcast('apple', { connected: true });
+          } else if (ok === null || Date.now() - started > 10 * 60000) clearInterval(timer);
+        }, 3000);
+        return;
+      }
+      case 'POST /api/apple/disconnect':
+        if (ownerOnly()) return;
+        store.update({ music: { appleWeb: false } });
+        return send(res, 200, { ok: true });
       case 'POST /api/spotify/disconnect':
         if (ownerOnly()) return;
         music.disconnect();

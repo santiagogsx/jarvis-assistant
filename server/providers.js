@@ -122,7 +122,7 @@ async function chat(opts) {
   }
 }
 
-async function chatWith({ settings, provider: p, model, msgs, systemPrompt, toolDefs, runTool }) {
+async function chatWith({ settings, provider: p, model, msgs, systemPrompt, toolDefs, runTool, onToken }) {
   if (!model) throw Object.assign(new Error(`No model is set for ${NAMES[p] || p}. Open Settings and enter one.`), { noFallback: true });
 
   if (p === 'anthropic') {
@@ -133,16 +133,71 @@ async function chatWith({ settings, provider: p, model, msgs, systemPrompt, tool
   if (!cfg) throw new Error('Unknown AI provider: ' + p);
   if (!cfg.base && !cfg.url) throw Object.assign(new Error('Set the base URL for your custom provider in Settings.'), { noFallback: true });
   if (!cfg.key) throw Object.assign(new Error(`No ${NAMES[p]} API key saved yet. Open Settings (gear icon) and paste it in.`), { status: 401 });
-  return compatChat(cfg, model, msgs, systemPrompt, toolDefs, runTool);
+  return compatChat(cfg, model, msgs, systemPrompt, toolDefs, runTool, onToken);
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function compatChat({ base, url: fullUrl, key, extra, waitOnLimit }, model, history, system, toolDefs, runTool) {
+// Streaming request: hands each piece of text to onToken as soon as it
+// arrives (like ChatGPT), and rebuilds the full message incl. tool calls.
+async function postStream(url, headers, body, onToken) {
+  let res;
+  try {
+    res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ ...body, stream: true }) });
+  } catch {
+    throw new Error(`Couldn't reach ${new URL(url).host}. Check the internet connection.`);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    let d = null;
+    try { d = JSON.parse(text); } catch {}
+    const raw = d?.error?.message || d?.error || d?.message || text.slice(0, 300);
+    throw Object.assign(new Error(`${res.status}: ${typeof raw === 'string' ? raw : JSON.stringify(raw)}`), { status: res.status });
+  }
+  const msg = { content: '', tool_calls: [] };
+  const dec = new TextDecoder();
+  let buf = '';
+  for await (const chunk of res.body) {
+    buf += dec.decode(chunk, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') continue;
+      let d;
+      try { d = JSON.parse(data); } catch { continue; }
+      const delta = d.choices?.[0]?.delta || {};
+      if (delta.content) { msg.content += delta.content; onToken(delta.content); }
+      for (const tc of delta.tool_calls || []) {
+        const slot = msg.tool_calls[tc.index ?? 0] ||= { id: '', type: 'function', function: { name: '', arguments: '' } };
+        if (tc.id) slot.id = tc.id;
+        if (tc.function?.name) slot.function.name += tc.function.name;
+        if (tc.function?.arguments) slot.function.arguments += tc.function.arguments;
+      }
+    }
+  }
+  msg.tool_calls = msg.tool_calls.filter(Boolean);
+  msg.tool_calls.forEach((c, n) => { if (!c.id) c.id = `call_${n}`; });
+  if (!msg.tool_calls.length) delete msg.tool_calls;
+  return { choices: [{ message: msg }] };
+}
+
+// Run all tool calls from one AI step at the same time (faster than one by one).
+const runAll = (calls, runTool) => Promise.all(calls.map(c => runTool(c.name, c.args).catch(e => ({ error: e.message }))));
+
+async function compatChat({ base, url: fullUrl, key, extra, waitOnLimit }, model, history, system, toolDefs, runTool, onToken) {
   const url = fullUrl || base.replace(/\/+$/, '') + '/chat/completions';
   const headers = { authorization: `Bearer ${key}`, ...(extra || {}) };
+  // The no-signup starter AI doesn't stream reliably; everything else does.
+  const stream = onToken && !waitOnLimit;
   const post = async body => {
     try {
+      if (stream) {
+        try { return await postStream(url, headers, body, onToken); }
+        catch (e) { if (e.status !== 400) throw e; } // this service can't stream here: ask normally
+      }
       return await postJSON(url, headers, body);
     } catch (e) {
       // The no-signup service allows one reply every ~30s: wait once, then retry.
@@ -176,12 +231,13 @@ async function compatChat({ base, url: fullUrl, key, extra, waitOnLimit }, model
     if (!msg) throw new Error('The AI sent back an empty answer.');
     if (msg.tool_calls?.length) {
       messages.push({ role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls });
-      for (const call of msg.tool_calls) {
+      const calls = msg.tool_calls.map(call => {
         let args = {};
         try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
-        const result = await runTool(call.function.name, args);
-        messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
-      }
+        return { name: call.function.name, args };
+      });
+      const results = await runAll(calls, runTool);
+      msg.tool_calls.forEach((call, n) => messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(results[n]) }));
       continue;
     }
     // Some free models put their answer only in a "reasoning" field.
@@ -200,12 +256,8 @@ async function anthropicChat(key, model, history, system, toolDefs, runTool) {
     const uses = (data.content || []).filter(b => b.type === 'tool_use');
     if (data.stop_reason === 'tool_use' && uses.length) {
       messages.push({ role: 'assistant', content: data.content });
-      const results = [];
-      for (const u of uses) {
-        const result = await runTool(u.name, u.input || {});
-        results.push({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(result) });
-      }
-      messages.push({ role: 'user', content: results });
+      const out = await runAll(uses.map(u => ({ name: u.name, args: u.input || {} })), runTool);
+      messages.push({ role: 'user', content: uses.map((u, n) => ({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(out[n]) })) });
       continue;
     }
     return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();

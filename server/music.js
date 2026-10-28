@@ -7,7 +7,7 @@ const { execFile } = require('child_process');
 const SCOPES = 'user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private';
 const enc = encodeURIComponent;
 
-function createMusic(store) {
+function createMusic(store, browser) {
   let pkce = null;                 // { verifier, state, redirect }
   let access = { token: '', expires: 0 };
 
@@ -116,16 +116,38 @@ function createMusic(store) {
       execFile(cmd, args, { timeout: 15000, windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(String(stdout).trim()))));
   }
 
-  // Windows media keys work with whichever player is active.
-  const VK = { play: 0xB3, pause: 0xB3, resume: 0xB3, next: 0xB0, previous: 0xB1 };
-  async function mediaKey(action) {
-    const vk = VK[action];
-    if (!vk) return { error: `"${action}" isn't available with media keys on this computer.` };
-    const ps = `$s='[DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e);';` +
-      `Add-Type -MemberDefinition $s -Name K -Namespace W;[W.K]::keybd_event(${vk},0,0,[UIntPtr]::Zero);[W.K]::keybd_event(${vk},0,2,[UIntPtr]::Zero)`;
-    await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
-    return { ok: true, note: 'Sent a media key to whatever music app is playing on the computer.' };
+  // Windows' own media controls (the same ones the volume pop-up uses): they
+  // drive and read Apple Music, Spotify, browsers… with no sign-in needed.
+  const WIN_ACTIONS = { play: 'Play', resume: 'Play', pause: 'Pause', toggle: 'TogglePlayPause', next: 'SkipNext', previous: 'SkipPrevious', now_playing: 'info' };
+  async function winMedia(action, filter = '') {
+    const act = WIN_ACTIONS[action];
+    if (!act) return { error: action === 'volume' ? 'Change the volume in the music app itself, or ask me on Spotify.' : `"${action}" isn't supported here.` };
+    const safeFilter = String(filter).replace(/[^\w|.]/g, '');
+    const script = [
+      `$Action='${act}'; $Filter='${safeFilter}'`,
+      "Add-Type -AssemblyName System.Runtime.WindowsRuntime",
+      "$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | ? { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]",
+      "function Await($op, [Type]$t) { $x = $asTask.MakeGenericMethod($t).Invoke($null, @($op)); $x.Wait(-1) | Out-Null; $x.Result }",
+      "[void][Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]",
+      "$m = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])",
+      "$s = $null; if ($Filter) { $s = $m.GetSessions() | ? { $_.SourceAppUserModelId -match $Filter } | Select -First 1 }",
+      "if (-not $s) { $s = $m.GetCurrentSession() }",
+      "if (-not $s) { '{\"none\":true}'; exit }",
+      "if ($Action -eq 'info') { $p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties]); @{ app = $s.SourceAppUserModelId; title = $p.Title; artist = $p.Artist; status = \"$($s.GetPlaybackInfo().PlaybackStatus)\" } | ConvertTo-Json -Compress }",
+      "else { $ok = Await ($s.\"Try$($Action)Async\"()) ([bool]); @{ ok = $ok; app = $s.SourceAppUserModelId } | ConvertTo-Json -Compress }",
+    ].join('\n');
+    let out;
+    try { out = JSON.parse(await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script])); }
+    catch { return { error: "Couldn't reach the music player through Windows media controls." }; }
+    if (out.none) return { error: 'Nothing is playing on this computer right now. Open Apple Music or Spotify and play something first.' };
+    const appName = /apple/i.test(out.app) ? 'Apple Music' : /spotify/i.test(out.app) ? 'Spotify' : /chrome|edge|brave/i.test(out.app) ? 'the browser' : out.app;
+    if (act === 'info') return { playing: out.status === 'Playing', status: out.status, track: out.title, artist: out.artist, app: appName };
+    return { ok: !!out.ok, app: appName };
   }
+  const mediaKey = winMedia; // kept for older callers
+
+  // Apple Music web player in Jarvis's browser, after the person signs in there once.
+  const appleWebConnected = () => !!store.get().music.appleWeb;
 
   const asText = s => '"' + String(s).replace(/["\\]/g, '') + '"';
   async function macApp(appName, action, { query, volume } = {}) {
@@ -172,13 +194,32 @@ function createMusic(store) {
       return { error: service === 'spotify' ? 'Connect Spotify in Settings on the main computer to control playback from here.' : 'Apple Music can only be controlled on the main computer.' };
     }
 
+    // Apple Music, signed in once in Jarvis's browser: search and press play for the person.
+    if (service === 'apple_music' && action === 'play' && query && appleWebConnected() && browser) {
+      try { return await browser.appleMusicPlay(query); } catch (e) { /* fall through to the app */ }
+    }
     if (process.platform === 'darwin') return macApp(service === 'apple_music' ? 'Music' : 'Spotify', action, { query, volume });
-    if (action === 'play' && query) return { ok: true, open_url: searchUrl, note: 'Opened the search. Tap play (connect Spotify in Settings for hands-free play).' };
-    if (process.platform === 'win32') return mediaKey(action);
+    if (action === 'play' && query) {
+      return { ok: true, open_url: searchUrl, note: service === 'apple_music'
+        ? 'Opened the search. Tap play. (Connect Apple Music in Settings → Music and I can press play for you.)'
+        : 'Opened the search. Tap play (connect Spotify in Settings for hands-free play).' };
+    }
+    if (process.platform === 'win32') {
+      const filter = service === 'apple_music' ? (appleWebConnected() ? 'Apple|chrome|msedge|brave' : 'Apple') : 'Spotify';
+      return winMedia(action, filter);
+    }
     return { error: 'Music control is not supported on this system yet.' };
   }
 
-  return { control, loginUrl, finishLogin, spotifyConnected, disconnect, redirectUri };
+  // For Settings → Music: is Apple Music connected, and what's playing right now?
+  async function appleStatus() {
+    let playing = null;
+    if (process.platform === 'win32') playing = await winMedia('now_playing', 'Apple').catch(() => null);
+    else if (process.platform === 'darwin') playing = await macApp('Music', 'now_playing').catch(() => null);
+    return { webConnected: appleWebConnected(), playing: playing && !playing.error ? playing : null };
+  }
+
+  return { control, loginUrl, finishLogin, spotifyConnected, disconnect, redirectUri, appleStatus, winMedia };
 }
 
 module.exports = { createMusic };

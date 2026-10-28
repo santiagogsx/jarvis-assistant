@@ -17,8 +17,12 @@ contextBridge.exposeInMainWorld('jarvisDesktop', {
   onMode: fn => ipcRenderer.on('holo-mode', (_e, mode) => fn(mode)),
   onUpdate: fn => ipcRenderer.on('update', (_e, info) => fn(info)),
   installUpdate: () => ipcRenderer.send('update:install'),
+  checkUpdate: () => ipcRenderer.send('update:check'),
+  updateState: () => ipcRenderer.invoke('update:state'),
   openUpdatePage: () => ipcRenderer.send('update:page'),
   version: () => ipcRenderer.invoke('app:version'),
+  getTray: () => ipcRenderer.invoke('tray:get'),
+  setTray: keep => ipcRenderer.invoke('tray:set', keep),
   getAutoStart: () => ipcRenderer.invoke('autostart:get'),
   setAutoStart: on => ipcRenderer.invoke('autostart:set', on),
 });

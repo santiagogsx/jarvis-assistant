@@ -59,7 +59,7 @@ const DEFAULTS = {
   sttLanguage: 'auto',   // Whisper language hint + which offline model to use
   sttWords: '',          // names/places/slang to help recognition
   email: { preset: 'gmail', user: '', imapHost: 'imap.gmail.com', imapPort: 993, smtpHost: 'smtp.gmail.com', smtpPort: 465 },
-  music: { service: 'spotify', spotifyClientId: '' },
+  music: { service: 'spotify', spotifyClientId: '', appleWeb: false },
   phone: { twilioSid: '', twilioFrom: '', myNumber: '' },
   // Practice accounts unless live mode is chosen AND confirmed.
   trading: { alpacaMode: 'paper', oandaMode: 'practice', oandaAccount: '', liveConfirmed: false },
