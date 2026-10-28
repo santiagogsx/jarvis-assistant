@@ -13,7 +13,7 @@ Installed copies update themselves for free when a new version comes out.
 
 ### Publishing an update (for the owner)
 1. Change `"version"` in `package.json` (e.g. `1.0.0` → `1.1.0`).
-2. Push the change and a matching tag (`git tag v1.1.0` then `git push --follow-tags`).
+2. Commit and push the change, then add and push a matching tag: `git tag v1.1.0` then `git push origin v1.1.0`.
 3. GitHub builds Windows + Mac and publishes them; every installed Jarvis picks it up automatically.
 
 A see-through, Iron Man style holographic assistant for **Windows and Mac**. You can also open it from **any phone or web browser**.
