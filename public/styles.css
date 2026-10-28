@@ -197,6 +197,8 @@ body[data-mode="error"] .ring circle { stroke: var(--red); }
   background: rgba(95, 227, 255, .15); border: 1px solid var(--cyan); color: var(--cyan);
 }
 .send:hover { background: rgba(95, 227, 255, .3); }
+.send.stop { color: #fff; border-color: var(--red); background: rgba(255, 107, 90, .3); animation: blink 1.6s infinite; }
+.send.stop:hover { background: rgba(255, 107, 90, .5); }
 @keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(95, 227, 255, 0); } 0% { box-shadow: 0 0 0 0 rgba(95, 227, 255, .6); } }
 
 /* ---------- lock screen ---------- */

@@ -7,7 +7,8 @@
   // The wake phrase follows the assistant's name ("hey friday", "friday"...).
   const grammarFor = name => {
     const n = name.toLowerCase().replace(/[^a-z' ]/g, '').trim() || 'jarvis';
-    return JSON.stringify([`hey ${n}`, n, `okay ${n}`, `hi ${n}`, `yo ${n}`, '[unk]']);
+    // Also "stop"/"cancel" so the person can interrupt him mid-task.
+    return JSON.stringify([`hey ${n}`, n, `okay ${n}`, `hi ${n}`, `yo ${n}`, `${n} stop`, `${n} cancel`, 'stop', 'cancel', 'never mind', 'be quiet', '[unk]']);
   };
 
   let modelPromise = null;
@@ -58,11 +59,18 @@
     node.connect(ctx.destination); // outputs silence; needed so the processor keeps running
   }
 
-  function heard(text) {
+  // Tells the app what was heard: his name ("Jarvis", "Hey Jarvis") and/or a
+  // stop word. A bare "stop"/"cancel" only counts as a whole phrase on its own
+  // (so him saying "I'll cancel that reminder" doesn't stop himself).
+  function heard(text, final) {
     if (!wakeOn || paused || capture || Date.now() < coolUntil) return;
-    if (new RegExp(`\\b${wakeName}\\b`, 'i').test(text)) {
-      coolUntil = Date.now() + 2500;
-      onWake?.();
+    const name = new RegExp(`\\b${wakeName}\\b`, 'i').test(text);
+    const clean = text.replace(/\[unk\]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    const stopWord = /\b(stop|cancel|never mind|be quiet)\b/.test(clean);
+    const standaloneStop = final && !/\[unk\]/.test(text) && /^(stop|cancel|never mind|be quiet)$/.test(clean);
+    if (name || standaloneStop) {
+      coolUntil = Date.now() + (stopWord ? 1500 : 2500);
+      onWake?.({ name, stop: stopWord, text: clean });
     }
   }
 
@@ -74,8 +82,8 @@
     wakeName = n;
     if (!wakeRec) {
       wakeRec = new model.KaldiRecognizer(ctx.sampleRate, grammarFor(n));
-      wakeRec.on('partialresult', m => heard(m.result?.partial || ''));
-      wakeRec.on('result', m => heard(m.result?.text || ''));
+      wakeRec.on('partialresult', m => heard(m.result?.partial || '', false));
+      wakeRec.on('result', m => heard(m.result?.text || '', true));
     }
     wakeOn = true;
     paused = false;

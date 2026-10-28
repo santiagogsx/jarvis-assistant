@@ -225,14 +225,44 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  const STOP_WORDS = /^(stop|cancel|never ?mind|nevermind|be quiet|(hey )?\w+,? (stop|cancel))[.!]*$/i;
+
+  // Stop whatever Jarvis is doing: the AI request, its tools, and his voice.
+  function cancelTask({ silent = false } = {}) {
+    const wasBusy = state.busy;
+    const wasTalking = speechBusy() || document.body.dataset.mode === 'speaking';
+    if (state.abort) { try { state.abort.abort(); } catch {} state.abort = null; }
+    stopSpeaking();
+    setBusy(false);
+    if (document.body.dataset.mode !== 'listening') setMode('idle');
+    if ((wasBusy || wasTalking) && !silent) addMsg('tool', 'STOPPED');
+    return wasBusy || wasTalking;
+  }
+
+  // While busy, SEND turns into a red STOP button.
+  function setBusy(on) {
+    state.busy = on;
+    const b = $('#input-bar .send');
+    b.textContent = on ? '■ STOP' : 'SEND';
+    b.classList.toggle('stop', on);
+    b.type = on ? 'button' : 'submit';
+  }
+  $('#input-bar .send').addEventListener('click', () => { if (state.busy) cancelTask(); });
+
   async function ask(text) {
     text = String(text || '').trim();
-    if (!text || state.busy) return;
+    if (!text) return;
+    // "Stop" / "cancel" never goes to the AI.
+    if (STOP_WORDS.test(text)) { if (!cancelTask()) addMsg('tool', 'NOTHING TO STOP'); return; }
+    // A new request while he's still working replaces the old one.
+    if (state.busy) cancelTask({ silent: true });
     unlockAudio();
     stopSpeaking();
     addMsg('user', text);
     state.history.push({ role: 'user', content: text });
-    state.busy = true;
+    setBusy(true);
+    const myTask = new AbortController();
+    state.abort = myTask;
     setMode('thinking');
 
     // Stream the answer: words appear as the AI writes them, and each finished
@@ -265,14 +295,22 @@
     let r;
     try {
       r = await askStream({ history: state.history.slice(-24), deviceCity: deviceCity(), stream: true }, tok => {
+        if (myTask.signal.aborted) return;
         if (!el) { el = addMsg('jarvis', ''); }
         shown += tok;
         pending += tok;
         if (!drawQueued) { drawQueued = true; requestAnimationFrame(draw); }
         speakReady();
-      });
+      }, myTask.signal);
     } catch (e) { r = { error: e.message }; }
-    state.busy = false;
+    // Stopped by the person: keep what was shown, mark it, and say nothing more.
+    if (myTask.signal.aborted) {
+      if (el) { body().classList.remove('typing'); body().insertAdjacentHTML('beforeend', ' <span class="muted">(stopped)</span>'); }
+      state.history.pop();
+      return;
+    }
+    state.abort = null;
+    setBusy(false);
     if (r.error) {
       state.history.pop();
       el?.remove();
@@ -306,13 +344,14 @@
   }
 
   // POST /api/ask as a stream of JSON lines: {t:'token'} … then {t:'done'} or {t:'error'}.
-  async function askStream(payload, onToken) {
+  async function askStream(payload, onToken, signal) {
     const headers = { 'content-type': 'application/json' };
     if (state.pass) headers['x-jarvis-pass'] = state.pass;
     let res;
-    try { res = await fetch('/api/ask', { method: 'POST', headers, body: JSON.stringify(payload) }); }
+    // Aborting `signal` drops the connection, which tells the server to stop too.
+    try { res = await fetch('/api/ask', { method: 'POST', headers, body: JSON.stringify(payload), signal }); }
     catch { throw new Error("I can't reach the main computer. Is Jarvis running there?"); }
-    if (res.status === 401) { await askPasscode('Enter the passcode to continue.'); return askStream(payload, onToken); }
+    if (res.status === 401) { await askPasscode('Enter the passcode to continue.'); return askStream(payload, onToken, signal); }
     if (!res.ok || !res.body) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -338,7 +377,9 @@
     document.body.dataset.mode = mode;
     desk?.sendMode?.(mode); // the extra monitors react too
     // Only listen for the wake word while Jarvis is idle (so he can't wake himself up).
-    if (window.wake?.running) { if (mode === 'idle' || mode === 'error') window.wake.resume(); else window.wake.pause(); }
+    // The wake word keeps listening while he thinks or talks, so "Jarvis, stop" works;
+    // it only rests while the mic is taking down a request.
+    if (window.wake?.running) { if (mode === 'listening') window.wake.pause(); else window.wake.resume(); }
     if (mode === 'idle') caption('');
     else if (mode === 'listening') caption('Listening…');
     else if (mode === 'thinking') caption('One moment…');
@@ -628,7 +669,7 @@
 
   async function toggleListen(fromWake = false) {
     if (state.listening) return stopListening();
-    if (state.busy) return;
+    if (state.busy) cancelTask({ silent: true }); // talking to him mid-task replaces the task
     // "Only when I say his name": the mic button/hotkey don't open the mic (unless the wake word can't run here).
     if (!fromWake && listenMode() === 'name' && window.wake?.running) {
       return sys(`I'm set to listen only when you say my name. Say "Hey ${aiName()}", or change it in Settings → This device.`);
@@ -691,8 +732,16 @@
     });
   }
 
-  function onWakeWord() {
-    if (state.busy || state.listening || document.body.dataset.mode !== 'idle') return;
+  // Heard his name and/or "stop"/"cancel".
+  //  - while working or talking: stop at once; if it was his name, listen for the new request
+  //  - while idle: his name wakes him up as usual
+  function onWakeWord(info = { name: true }) {
+    if (state.listening) return;
+    const working = state.busy || speechBusy() || document.body.dataset.mode === 'speaking';
+    if (working) {
+      cancelTask();
+      if (info.stop || !info.name) return;
+    } else if (!info.name) return;
     chime();
     setTimeout(() => toggleListen(true), 180);
   }
@@ -1539,7 +1588,7 @@
     else { input.value = b.dataset.fill; input.focus(); }
   });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { stopSpeaking(); if (state.listening) stopListening(); }
+    if (e.key === 'Escape') { if (state.listening) stopListening(); else cancelTask(); }
   });
 
   // ---- free updates: top-bar button + Settings → Updates show the same status

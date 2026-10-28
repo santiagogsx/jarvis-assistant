@@ -24,11 +24,20 @@ const NAMES = {
 // Research can take several search + read-page rounds.
 const MAX_STEPS = 12;
 
+// "Stop" from the person: the cancel signal travels with the request, so every
+// AI call and step below can notice it without passing it around by hand.
+const { AsyncLocalStorage } = require('async_hooks');
+const cancelScope = new AsyncLocalStorage();
+const cancelSignal = () => cancelScope.getStore()?.signal;
+const CANCELLED = () => Object.assign(new Error('Cancelled.'), { cancelled: true, noFallback: true });
+function checkCancelled() { if (cancelSignal()?.aborted) throw CANCELLED(); }
+
 async function postJSON(url, headers, body) {
   let res;
   try {
-    res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: cancelSignal() });
   } catch {
+    checkCancelled();
     const local = /localhost|127\.0\.0\.1/.test(url);
     throw new Error(`Couldn't reach ${new URL(url).host}. ${local ? 'Is Ollama running?' : 'Check the internet connection.'}`);
   }
@@ -92,8 +101,16 @@ async function freeChain(settings) {
 // Errors where trying another AI makes sense (bad/expired key, out of credit, rate limit, outage, offline).
 const worthFallback = e => !e.status || [401, 402, 403, 404, 408, 429, 500, 502, 503, 504].includes(e.status);
 
-async function chat(opts) {
+// opts.signal (optional): aborting it stops the whole request.
+function chat(opts) {
+  return cancelScope.run({ signal: opts.signal }, () => chatInner(opts));
+}
+
+async function chatInner(opts) {
   const { settings } = opts;
+  // Tools don't run once the person has said stop.
+  const runTool = opts.runTool;
+  opts = { ...opts, runTool: (name, args) => { checkCancelled(); return runTool(name, args); } };
   const msgs = cleanHistory(opts.history);
   if (!msgs.length) throw new Error('Nothing to answer.');
   const run = (provider, model) => chatWith({ ...opts, provider, model, msgs });
@@ -102,7 +119,7 @@ async function chat(opts) {
     let lastErr;
     for (const { provider, model } of await freeChain(settings)) {
       // Any failure (limit reached, model retired, outage): just try the next free option.
-      try { return await run(provider, model); } catch (e) { lastErr = e; }
+      try { return await run(provider, model); } catch (e) { if (e.cancelled || cancelSignal()?.aborted) throw CANCELLED(); lastErr = e; }
     }
     throw new Error(`All the free AIs are busy right now (${lastErr?.message}). Wait a moment, or add more free keys (Groq, Cerebras, Mistral) or set up unlimited Ollama in Settings → AI.`);
   }
@@ -110,13 +127,14 @@ async function chat(opts) {
   try {
     return await run(settings.provider, (settings.models[settings.provider] || '').trim());
   } catch (e) {
+    if (e.cancelled || cancelSignal()?.aborted) throw CANCELLED();
     if (!worthFallback(e) || e.noFallback) throw e;
     // The paid/selected AI failed: keep working on the free chain instead.
     for (const { provider, model } of await freeChain(settings)) {
       try {
         const reply = await run(provider, model);
         return `${reply}\n\n(Your ${NAMES[settings.provider] || settings.provider} connection failed: ${e.message.slice(0, 120).replace(/\.+$/, '')}. I answered with ${NAMES[provider]} instead.)`;
-      } catch {}
+      } catch (e2) { if (e2.cancelled) throw e2; }
     }
     throw e;
   }
@@ -143,8 +161,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function postStream(url, headers, body, onToken) {
   let res;
   try {
-    res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ ...body, stream: true }) });
+    res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ ...body, stream: true }), signal: cancelSignal() });
   } catch {
+    checkCancelled();
     throw new Error(`Couldn't reach ${new URL(url).host}. Check the internet connection.`);
   }
   if (!res.ok) {
@@ -214,6 +233,7 @@ async function compatChat({ base, url: fullUrl, key, extra, waitOnLimit }, model
   let retried = false;
 
   for (let step = 0; step < MAX_STEPS; step++) {
+    checkCancelled();
     let data;
     try {
       data = await post({ model, messages, ...(tools.length ? { tools } : {}) });
@@ -252,6 +272,7 @@ async function anthropicChat(key, model, history, system, toolDefs, runTool) {
   const tools = toolDefs.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters }));
 
   for (let step = 0; step < MAX_STEPS; step++) {
+    checkCancelled();
     const data = await postJSON('https://api.anthropic.com/v1/messages', headers, { model, max_tokens: 1500, system, messages, tools });
     const uses = (data.content || []).filter(b => b.type === 'tool_use');
     if (data.stop_reason === 'tool_use' && uses.length) {

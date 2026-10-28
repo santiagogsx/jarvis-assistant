@@ -228,10 +228,14 @@ async function startServer({ store, port, host, notify }) {
         // Only send the AI the tools this conversation needs: much faster replies.
         const toolDefs = tools.pick(history);
         // stream: text goes to the screen word by word (one JSON object per line).
-        const write = obj => res.write(JSON.stringify(obj) + '\n');
+        const write = obj => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(obj) + '\n'); };
         if (stream) res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+        // "Stop": the app drops the connection, and everything still running here halts.
+        const cancel = new AbortController();
+        res.on('close', () => { if (!res.writableFinished) cancel.abort(); });
         try {
           const reply = await chat({
+            signal: cancel.signal,
             settings: s, history, systemPrompt: systemPrompt(s, local), toolDefs,
             runTool: (name, args) => { broadcastTo(res, name); if (stream) write({ t: 'tool', name }); return tools.run(name, args, ctx); },
             onToken: stream ? text => write({ t: 'token', v: text }) : undefined,
@@ -240,6 +244,7 @@ async function startServer({ store, port, host, notify }) {
           if (stream) { write({ t: 'done', ...out }); return res.end(); }
           return send(res, 200, out);
         } catch (e) {
+          if (e.cancelled) { if (!res.writableEnded) res.end(); return; }
           if (stream) { write({ t: 'error', error: e.message, actions }); return res.end(); }
           return send(res, 200, { error: e.message, actions });
         }
