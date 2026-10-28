@@ -309,7 +309,7 @@
   };
   document.addEventListener('click', e => { if (!e.target.closest('.eyes-wrap')) $('#eyes-menu').hidden = true; });
 
-  async function ask(text) {
+  async function ask(text, { voice = false } = {}) {
     text = String(text || '').trim();
     if (!text) return;
     // "Stop" / "cancel" never goes to the AI.
@@ -357,7 +357,7 @@
     };
     let r;
     try {
-      r = await askStream({ history: state.history.slice(-24), deviceCity: deviceCity(), stream: true }, tok => {
+      r = await askStream({ history: state.history.slice(-24), deviceCity: deviceCity(), stream: true, voice }, tok => {
         if (myTask.signal.aborted) return;
         if (!el) { el = addMsg('jarvis', ''); }
         shown += tok;
@@ -380,6 +380,13 @@
       handleActions(r.actions, sys(r.error));
       setMode('error');
       setTimeout(() => { if (document.body.dataset.mode === 'error') setMode('idle'); }, 2500);
+      return;
+    }
+    // Reflex decided this wasn't meant for Jarvis (background talk): stay quiet.
+    if (r.ignored) {
+      state.history.pop();
+      addMsg('tool', "IGNORED: DIDN'T SOUND LIKE IT WAS FOR ME");
+      setMode('idle');
       return;
     }
     if (r.usedBy) renderAiChip(r.usedBy);
@@ -430,7 +437,8 @@
         if (!line.trim()) continue;
         let m; try { m = JSON.parse(line); } catch { continue; }
         if (m.t === 'token') onToken(m.v);
-        else if (m.t === 'done') result = { reply: m.reply, actions: m.actions, usedBy: m.usedBy };
+        else if (m.t === 'done') result = { reply: m.reply, actions: m.actions, usedBy: m.usedBy, ignored: m.ignored };
+        else if (m.t === 'reflex') renderReflex(m);
         else if (m.t === 'error') result = { error: m.error, actions: m.actions };
       }
     }
@@ -774,7 +782,7 @@
     state.voskActive = false;
     setListening(false);
     input.value = '';
-    if (text) ask(text); else setMode('idle');
+    if (text) ask(text, { voice: true }); else setMode('idle');
   }
 
   // Short two-tone chime, like a smart speaker waking up.
@@ -878,7 +886,7 @@
       setListening(false);
       const t = (finalText || input.value).trim();
       input.value = '';
-      if (t) ask(t); else setMode('idle');
+      if (t) ask(t, { voice: true }); else setMode('idle');
     };
     state.rec = rec;
     setListening(true);
@@ -920,7 +928,7 @@
       try {
         const r = await api('/stt', { method: 'POST', raw: blob, type: blob.type });
         if (r.error) throw new Error(r.error);
-        if (r.text.trim()) ask(r.text); else setMode('idle');
+        if (r.text.trim()) ask(r.text, { voice: true }); else setMode('idle');
       } catch (e) { setMode('idle'); sys('I did not catch that: ' + e.message); }
     };
 
@@ -1189,6 +1197,7 @@
     F('model').value = s.models[s.provider] || '';
     F('customBaseUrl').value = s.customBaseUrl || '';
     F('browser').value = s.browser || 'auto';
+    F('reflex').checked = s.reflex !== false;
     F('ollamaUrl').value = s.ollamaUrl || '';
     refreshFast();
     refreshMail();
@@ -1396,6 +1405,7 @@
     const patch = {
       provider: p, models: state.formModels,
       browser: F('browser').value,
+      reflex: F('reflex').checked,
       customBaseUrl: F('customBaseUrl').value.trim(), ollamaUrl: F('ollamaUrl').value.trim(),
       assistantName: F('assistantName').value.trim().replace(/[^\p{L}\p{N} '-]/gu, '').slice(0, 20) || 'Jarvis',
       userName: F('userName').value.trim(), namePronounce: F('namePronounce').value.trim(), userTitle: F('userTitle').value.trim() || 'sir',
@@ -1463,6 +1473,32 @@
     state.muted = wasMuted;
     state.settings.voice = prev;
   };
+
+  // ---- Reflex panel: the five quick decisions, as bars under the orb
+  let reflexTimer = null;
+  const LANE_NAMES = { chat: 'chat', vault: 'second brain', calendar: 'calendar', email: 'email', reminders: 'reminders & tasks', music: 'music', weather: 'weather', research: 'research', shopping: 'shopping', trading: 'trading', files: 'files', website: 'websites', phone: 'phone', social: 'social', eyes: 'eyes', apps: 'apps' };
+  function renderReflex(rx) {
+    const box = $('#reflex');
+    if (!box || state.settings?.reflex === false) return;
+    const row = q => {
+      const pct = Math.round(q.value * 100);
+      const cls = { ACT: 'act', CLEAR: 'act', FOUND: 'act', ASK: 'ask', CONFIRM: 'confirm', IGNORE: 'confirm', NO: 'dim' }[q.verdict] || 'act';
+      const label = q.key === 'lane' ? `Lane <b>${esc(LANE_NAMES[q.answer] || q.answer)}</b>` : esc(q.label);
+      return `<div class="rx-row"><div class="rx-label">${label}<small>${esc(q.help)}</small></div>
+        <div class="rx-bar"><i style="width:${pct}%"></i></div><span class="rx-pct">${pct}%</span><span class="rx-verdict ${cls}">${esc(q.verdict)}</span></div>`;
+    };
+    const summary = { act: 'ACTING', ask: 'ASKING YOU TO FINISH', confirm: 'WILL CONFIRM FIRST', ignore: 'IGNORING' }[rx.action] || 'ACTING';
+    box.innerHTML = `<div class="rx-head"><span>⚡ REFLEX</span><span>${rx.questions.length} checks · ${rx.ms} ms · ${esc(rx.by)}</span></div>
+      ${rx.questions.map(row).join('')}
+      <div class="rx-foot">● ${esc((LANE_NAMES[rx.lane] || rx.lane).toUpperCase())} · ${summary}${rx.notes?.length ? ' · NOTES: ' + rx.notes.map(esc).join(', ') : ''}</div>`;
+    box.hidden = false;
+    box.classList.remove('fade');
+    clearTimeout(reflexTimer);
+    reflexTimer = setTimeout(() => {
+      box.classList.add('fade');
+      reflexTimer = setTimeout(() => { box.hidden = true; }, 2500); // gone again, the orb view stays clean
+    }, 10000);
+  }
 
   // ---- AI brain chip: shows which AI answers; click to switch (incl. 100% local)
   const shortModel = m => String(m || '').split('/').pop().replace(/:latest$/, '').slice(0, 26);

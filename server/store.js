@@ -42,7 +42,8 @@ const DEFAULTS = {
   assistantName: 'Jarvis',
   brain: { folders: [] },
   calendar: { kind: 'google' },  // where new events are saved: google | apple | outlook // extra folders the Second Brain reads (e.g. an Obsidian vault)
-  aiMode: 'normal',       // 'local' = only the AI running on this computer (Ollama), nothing leaves it
+  aiMode: 'normal',
+  reflex: true,           // fast decision layer before the main AI (5 checks shown under the orb)       // 'local' = only the AI running on this computer (Ollama), nothing leaves it
   browser: 'auto',       // live-research browser: auto | chrome | msedge | brave
   userName: '',
   namePronounce: '',

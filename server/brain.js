@@ -119,7 +119,10 @@ function createBrain({ dataDir, getSettings }) {
       const key = d.id + ':' + d.chunk;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ title: d.title, kind: d.kind, where: d.folder, file: d.id.includes(path.sep) ? d.id : undefined, text: d.text.trim().slice(0, 900), score: +score.toFixed(2) });
+      // coverage: how much of the question this note covers (used by Reflex's "Vault has it").
+      const coverage = q.filter(w => d.tf[w]).length / q.length;
+      const titleHit = q.some(w => d.title.toLowerCase().includes(w));
+      out.push({ title: d.title, kind: d.kind, where: d.folder, file: d.id.includes(path.sep) ? d.id : undefined, text: d.text.trim().slice(0, 900), score: +score.toFixed(2), coverage: +coverage.toFixed(2), titleHit });
       if (out.length >= limit) break;
     }
     return out;

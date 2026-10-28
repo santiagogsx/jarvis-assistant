@@ -17,6 +17,7 @@ const { createVoskModels } = require('./voskmodels');
 const { createBrowser } = require('./browser');
 const { createTrading } = require('./trading');
 const { createBrain } = require('./brain');
+const reflex = require('./reflex');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const MIME = {
@@ -246,17 +247,34 @@ async function startServer({ store, port, host, notify }) {
         return send(res, 200, { port: currentPort, urls: store.get().remote.enabled ? lanUrls(currentPort) : [] });
 
       case 'POST /api/ask': {
-        const { history, deviceCity, stream } = await json();
+        const { history, deviceCity, stream, voice: fromVoice } = await json();
         const s = store.get();
         // A phone with its own location: weather etc. default to where that person is.
         if (typeof deviceCity === 'string' && deviceCity.trim()) s.homeCity = deviceCity.trim().slice(0, 80);
         const actions = [];
         const ctx = { settings: s, local, actions };
         // Only send the AI the tools this conversation needs: much faster replies.
-        const toolDefs = tools.pick(history);
+        let toolDefs = tools.pick(history);
+        let extraSystem = '';
         // stream: text goes to the screen word by word (one JSON object per line).
         const write = obj => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(obj) + '\n'); };
         if (stream) res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+        const finish = out => { if (stream) { write({ t: 'done', ...out }); return res.end(); } return send(res, 200, out); };
+
+        // Reflex: five quick decisions before the main AI starts.
+        if (s.reflex !== false && Array.isArray(history)) {
+          const lastUser = [...history].reverse().find(m => m.role === 'user')?.content || '';
+          const rx = await reflex.decide({ text: lastUser, history, settings: s, brain, fromVoice: !!fromVoice }).catch(() => null);
+          if (rx) {
+            if (stream) write({ t: 'reflex', lane: rx.lane, questions: rx.questions, action: rx.action, by: rx.by, ms: rx.ms, notes: rx.vaultHits.map(h => h.title) });
+            if (rx.action === 'ignore') return finish({ reply: '', ignored: true, actions });
+            if (rx.action === 'ask' && fromVoice) return finish({ reply: `Sorry, ${s.userName || s.userTitle || 'sir'}, I think you were cut off. Could you finish that?`, actions, quick: true });
+            const names = new Set(toolDefs.map(d => d.name).concat(rx.tools));
+            toolDefs = tools.defs.filter(d => names.has(d.name));
+            if (rx.action === 'confirm') extraSystem += '\n- REFLEX: this request has real consequences (sending, buying, deleting, posting or spending). Prepare it, then clearly ask the person to confirm before anything final happens.';
+            if (rx.vaultHits.length) extraSystem += '\n- REFLEX: these notes from the person\'s Second Brain very likely answer this. Answer from them and name the note:\n' + rx.vaultHits.map(h => `  [${h.title}] ${h.text.slice(0, 600)}`).join('\n');
+          }
+        }
         // "Stop": the app drops the connection, and everything still running here halts.
         const cancel = new AbortController();
         res.on('close', () => { if (!res.writableFinished) cancel.abort(); });
@@ -265,7 +283,7 @@ async function startServer({ store, port, host, notify }) {
           const reply = await chat({
             signal: cancel.signal,
             onUsed: (provider, model) => { usedBy = { provider, name: NAMES[provider] || provider, model }; },
-            settings: s, history, systemPrompt: systemPrompt(s, local), toolDefs,
+            settings: s, history, systemPrompt: systemPrompt(s, local) + extraSystem, toolDefs,
             runTool: (name, args) => { broadcastTo(res, name); if (stream) write({ t: 'tool', name }); return tools.run(name, args, ctx); },
             onToken: stream ? text => write({ t: 'token', v: text }) : undefined,
           });

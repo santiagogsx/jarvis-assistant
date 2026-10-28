@@ -103,6 +103,7 @@
       <button type="button" id="ai-chip" class="ai-chip" title="Which AI brain answers: click to switch">● FREE AI ▾</button>
       <div id="ai-menu" class="ai-menu" hidden></div>
     </div>
+    <div id="reflex" class="reflex" hidden aria-live="polite"></div>
 
     <div id="log" class="log" aria-live="polite"></div>
 
@@ -266,6 +267,7 @@
       <label class="only-custom">Base URL <input name="customBaseUrl" placeholder="https://example.com/v1" spellcheck="false"></label>
       <label class="only-ollama">Ollama URL <input name="ollamaUrl" spellcheck="false"></label>
       <p class="hint" id="provider-hint"></p>
+      <label class="check"><input type="checkbox" name="reflex"> ⚡ Reflex: a fast decision layer that checks each request first (which area, finished?, for me?, risky?, in my notes?) and shows the checks under the orb</label>
       <label>Browser for live research (opens on screen so you can watch)
         <select name="browser">
           <option value="auto">Automatic (Chrome, then Edge, then Brave)</option>

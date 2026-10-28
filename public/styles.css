@@ -501,6 +501,29 @@ dialog#settings { width: min(900px, calc(100% - 16px)); max-height: calc(100% - 
 .ai-menu button.on::before { content: '✓ '; }
 .ai-menu small { display: block; color: var(--muted); font-size: 12px; }
 
+/* ---------- Reflex panel (5 quick decisions) ---------- */
+.reflex {
+  margin: 10px auto 0; width: min(560px, 100%); padding: 8px 12px; display: grid; gap: 4px;
+  background: rgba(4, 16, 26, .55); border: 1px solid var(--cyan-faint); backdrop-filter: blur(6px);
+  font-size: 12px; transition: opacity .8s; animation: rise .3s ease-out;
+}
+.reflex.fade { opacity: .35; }
+.rx-head, .rx-foot { display: flex; justify-content: space-between; gap: 8px; font: 500 10px var(--font-hud); letter-spacing: .15em; color: var(--cyan-dim); }
+.rx-foot { justify-content: flex-start; color: #7dffb2; margin-top: 2px; }
+.rx-row { display: grid; grid-template-columns: 150px 1fr 38px 66px; align-items: center; gap: 8px; }
+.rx-label { line-height: 1.1; color: var(--text); }
+.rx-label b { color: var(--cyan); font-weight: 600; }
+.rx-label small { display: block; color: var(--muted); font-size: 10px; }
+.rx-bar { height: 5px; background: var(--cyan-faint); overflow: hidden; }
+.rx-bar i { display: block; height: 100%; background: linear-gradient(90deg, #2bd18d, #7dffb2); box-shadow: 0 0 6px #7dffb2; transition: width .5s ease-out; }
+.rx-pct { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.rx-verdict { text-align: center; font: 600 9px var(--font-hud); letter-spacing: .12em; padding: 3px 0; border: 1px solid; border-radius: 3px; }
+.rx-verdict.act { color: #7dffb2; border-color: rgba(125, 255, 178, .5); }
+.rx-verdict.ask { color: var(--amber); border-color: rgba(255, 179, 71, .6); }
+.rx-verdict.confirm { color: #ff8a7a; border-color: rgba(255, 107, 90, .6); }
+.rx-verdict.dim { color: var(--muted); border-color: var(--cyan-faint); }
+@media (max-width: 760px) { .rx-row { grid-template-columns: 110px 1fr 34px 58px; } .rx-label small { display: none; } }
+
 /* ---------- Second Brain map ---------- */
 .brain {
   position: fixed; inset: calc(48px + env(safe-area-inset-top)) 0 0 0; z-index: 25; display: none;
