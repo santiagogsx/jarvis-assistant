@@ -165,6 +165,7 @@
     </div>
     <p class="notice" id="remote-notice" hidden>You're on another device. Settings can only be changed on the main computer, except the options under <b>This device</b>.</p>
     <nav class="tabs" id="tabs" aria-label="Settings sections">
+      <button type="button" data-tab="fast" class="fast-tab"><span>⚡</span>Make it fast (free)</button>
       <button type="button" data-tab="ai" class="active"><span>🧠</span>AI brain</button>
       <button type="button" data-tab="you"><span>👤</span>You &amp; name</button>
       <button type="button" data-tab="voice"><span>🔊</span>Voice</button>
@@ -177,6 +178,24 @@
       <button type="button" data-tab="access"><span>📱</span>Phone access</button>
       <button type="button" data-tab="updates"><span>⬆️</span>Updates <b class="tab-dot" id="update-dot" hidden>●</b></button>
     </nav>
+
+    <section class="tab" data-tab="fast" hidden>
+      <div class="fast-status" id="fast-status">Checking…</div>
+      <p>Jarvis is free. Out of the box he uses a free "starter" AI that can only answer about once every 30 seconds. A <b>free Groq key</b> makes him answer in about <b>1 second</b>. No credit card, no subscription, about 2 minutes:</p>
+      <ol class="steps">
+        <li><button type="button" class="primary big" id="groq-open">1. Get my free Groq key ↗</button><br><span class="hint">Opens console.groq.com/keys in your browser.</span></li>
+        <li><b>2.</b> Sign in. The easiest is <b>"Continue with Google"</b>, or use your email.</li>
+        <li><b>3.</b> Click <b>"Create API Key"</b>, type the name <b>Jarvis</b>, press <b>Submit</b>, then press <b>Copy</b>.</li>
+        <li><b>4.</b> Paste it here and press Save:
+          <div class="row paste-row">
+            <input id="groq-paste" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key (starts with gsk_)">
+            <button type="button" class="primary" id="groq-save">Save &amp; test</button>
+          </div>
+          <span id="groq-result" class="hint"></span>
+        </li>
+      </ol>
+      <p class="hint">The key is saved encrypted on this computer only. Want even more speed and no daily limits? Add more free keys (Cerebras, Gemini, Mistral) in <b>API keys</b>, or set up the unlimited offline AI under <b>AI brain</b>.</p>
+    </section>
 
     <section class="tab" data-tab="ai">
       <label>AI platform

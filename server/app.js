@@ -167,6 +167,22 @@ async function startServer({ store, port, host, notify }) {
         if (out.remote.enabled !== before) setTimeout(rebind, 200);
         return;
       }
+      case 'POST /api/keys/test': {
+        // "Make it fast": check a pasted free key really works, then save it.
+        if (ownerOnly()) return;
+        const { provider, key } = await json();
+        const k = String(key || '').trim();
+        const TESTS = { groq: 'https://api.groq.com/openai/v1/models', cerebras: 'https://api.cerebras.ai/v1/models', mistral: 'https://api.mistral.ai/v1/models' };
+        if (!TESTS[provider]) return send(res, 400, { error: 'Unknown service.' });
+        if (k.length < 20 || /\s/.test(k)) return send(res, 200, { ok: false, error: "That doesn't look like a full key. Copy it again with the Copy button and paste it here." });
+        try {
+          const r = await fetch(TESTS[provider], { headers: { authorization: `Bearer ${k}` }, signal: AbortSignal.timeout(15000) });
+          if (r.status === 401 || r.status === 403) return send(res, 200, { ok: false, error: 'Groq says this key is not valid. Make sure you copied the whole key.' });
+          if (!r.ok) return send(res, 200, { ok: false, error: `Groq answered with an error (${r.status}). Try again in a minute.` });
+        } catch { return send(res, 200, { ok: false, error: "Couldn't reach Groq. Check the internet connection." }); }
+        store.update({ keys: { [provider]: k } });
+        return send(res, 200, { ok: true });
+      }
       case 'POST /api/settings/clear-keys':
         if (ownerOnly()) return;
         music.disconnect();

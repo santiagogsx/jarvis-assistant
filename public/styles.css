@@ -471,6 +471,19 @@ dialog#settings { width: min(900px, calc(100% - 16px)); max-height: calc(100% - 
   #settings-form { height: 100%; max-height: 100%; }
 }
 
+/* Settings → Make it fast */
+.tabs button.fast-tab { color: var(--amber); }
+.tabs button.fast-tab.active { color: #fff; border-color: var(--amber); background: rgba(255, 179, 71, .15); }
+.fast-status { padding: 10px 12px; border: 1px solid var(--amber); background: rgba(255, 179, 71, .08); font-size: 16px; }
+.fast-status.good { border-color: #7dffb2; background: rgba(125, 255, 178, .08); color: #7dffb2; }
+.steps { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 12px; font-size: 16px; }
+.steps li { padding: 10px 12px; border-left: 2px solid var(--cyan-dim); background: rgba(95, 227, 255, .04); }
+button.big { font-size: 17px; padding: 12px 18px !important; }
+.paste-row { margin-top: 8px; flex-wrap: nowrap; }
+.paste-row input { flex: 1; min-width: 0; height: 42px; padding: 0 12px; font-size: 16px; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid rgba(95, 227, 255, .3); }
+#groq-result.good { color: #7dffb2; }
+#groq-result.bad { color: #ffb4aa; }
+
 /* Settings → Updates */
 .update-box { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--cyan-faint); background: rgba(95, 227, 255, .04); }
 .update-version { font-size: 17px; }

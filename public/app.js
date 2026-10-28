@@ -238,6 +238,7 @@
     // Stream the answer: words appear as the AI writes them, and each finished
     // sentence is spoken right away instead of waiting for the whole reply.
     let el = null, shown = '', pending = '', spoken = 0, capped = false, drawQueued = false;
+    const started = performance.now();
     const body = () => el.querySelector('.body');
     const draw = () => {
       drawQueued = false;
@@ -296,6 +297,11 @@
     }
     handleActions(r.actions, el);
     speakReady(true);
+    // A slow answer on the starter AI: point to the free fix (once per session).
+    if (state.local && !state.fastTipShown && state.settings?.provider === 'free' && !hasFastAI() && performance.now() - started > 8000) {
+      state.fastTipShown = true;
+      fastTip('That took a while because I\'m on the slow free starter AI. A free Groq key makes me answer in about a second.');
+    }
     if (!speechBusy() && document.body.dataset.mode === 'thinking') setMode('idle');
   }
 
@@ -1068,6 +1074,7 @@
     F('customBaseUrl').value = s.customBaseUrl || '';
     F('browser').value = s.browser || 'auto';
     F('ollamaUrl').value = s.ollamaUrl || '';
+    refreshFast();
     F('assistantName').value = s.assistantName || 'Jarvis';
     F('userName').value = s.userName || '';
     F('namePronounce').value = s.namePronounce || '';
@@ -1147,7 +1154,8 @@
     fillVoices();
     showWhen();
     showLan();
-    switchTab(tab || (state.local ? 'ai' : 'device'));
+    // Start where it helps most: the fast-mode steps until a free key is added.
+    switchTab(tab || (!state.local ? 'device' : s.provider === 'free' && !hasFastAI() ? 'fast' : 'ai'));
     $('#settings').showModal();
   }
 
@@ -1325,6 +1333,48 @@
     state.muted = wasMuted;
     state.settings.voice = prev;
   };
+
+  // ---- "Make it fast (free)": guided free Groq key
+  const hasFastAI = () => ['groq', 'cerebras', 'gemini', 'mistral', 'openrouter'].some(k => state.settings?.hasKey?.[k]);
+  function refreshFast() {
+    const el = $('#fast-status');
+    const fast = hasFastAI();
+    el.textContent = fast ? '✓ Fast mode is ON: answers come back in about a second.' : '⚠ Jarvis is on the slow free starter AI right now. Follow the 4 steps below to make him fast, for free.';
+    el.className = 'fast-status' + (fast ? ' good' : '');
+  }
+  $('#groq-open').onclick = () => {
+    const url = 'https://console.groq.com/keys';
+    if (desk) desk.openExternal(url); else window.open(url, '_blank', 'noopener');
+  };
+  $('#groq-save').onclick = async () => {
+    const out = $('#groq-result');
+    const key = $('#groq-paste').value.trim();
+    if (!key) { out.textContent = 'Paste the key first.'; out.className = 'hint bad'; return; }
+    out.textContent = 'Testing the key…';
+    out.className = 'hint';
+    const r = await api('/keys/test', { method: 'POST', body: { provider: 'groq', key } }).catch(e => ({ error: e.message }));
+    if (!r.ok) { out.textContent = r.error || 'That key did not work.'; out.className = 'hint bad'; return; }
+    $('#groq-paste').value = '';
+    out.textContent = '✓ Key works and is saved. Jarvis is now fast!';
+    out.className = 'hint good';
+    await loadSettings();
+    refreshFast();
+    showWhen();
+    sys('⚡ Fast mode is on. Try asking me something.');
+  };
+  // A button inside a chat message that opens Settings at "Make it fast".
+  function fastTip(text) {
+    const el = sys(text);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = '⚡ Make Jarvis fast (free)';
+    b.onclick = () => openSettings('fast');
+    const row = document.createElement('div');
+    row.className = 'chips';
+    row.append(b);
+    el.querySelector('.body').append(row);
+  }
 
   // ---- unlimited offline AI (Ollama)
   async function refreshOllama() {
@@ -1547,9 +1597,8 @@
     }
 
     const needsKey = !['free', 'ollama', 'custom'].includes(s.provider) && !s.hasKey[s.provider];
-    if (s.provider === 'free' && !s.hasKey.groq && !s.hasKey.gemini && state.local && lsGet('jarvis-free-tip') !== '1') {
-      lsSet('jarvis-free-tip', '1');
-      sys("I'm running on free AI, no subscription needed. Tip: add a free Groq key (no credit card) in Settings → AI for much faster replies.");
+    if (s.provider === 'free' && !hasFastAI() && state.local) {
+      fastTip("I'm running on the free starter AI, so my answers are slow. A free Groq key (no credit card, about 2 minutes) makes me answer in about a second.");
     }
     if (needsKey && state.local) {
       sys('Welcome. To give Jarvis a brain, choose an AI platform and paste its API key. Opening Settings now.');
