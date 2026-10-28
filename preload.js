@@ -1,0 +1,24 @@
+// Only present in the desktop app; phones/browsers simply don't have it.
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('jarvisDesktop', {
+  platform: process.platform,
+  minimize: () => ipcRenderer.send('win:minimize'),
+  maximize: () => ipcRenderer.send('win:maximize'),
+  close: () => ipcRenderer.send('win:close'),
+  setOnTop: on => ipcRenderer.invoke('win:on-top', on),
+  setBackground: style => ipcRenderer.invoke('win:background', style),
+  openExternal: url => ipcRenderer.invoke('open-external', url),
+  onHotkey: fn => ipcRenderer.on('hotkey-listen', () => fn()),
+  onWindowState: fn => ipcRenderer.on('win-state', (_e, s) => fn(s)),
+  getDisplays: () => ipcRenderer.invoke('displays:get'),
+  setDisplays: prefs => ipcRenderer.invoke('displays:set', prefs),
+  sendMode: mode => ipcRenderer.send('holo-mode', mode),
+  onMode: fn => ipcRenderer.on('holo-mode', (_e, mode) => fn(mode)),
+  onUpdate: fn => ipcRenderer.on('update', (_e, info) => fn(info)),
+  installUpdate: () => ipcRenderer.send('update:install'),
+  openUpdatePage: () => ipcRenderer.send('update:page'),
+  version: () => ipcRenderer.invoke('app:version'),
+  getAutoStart: () => ipcRenderer.invoke('autostart:get'),
+  setAutoStart: on => ipcRenderer.invoke('autostart:set', on),
+});

@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#03070c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' blob: data:">
+<title>J.A.R.V.I.S.</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-mode="idle">
+<div class="backdrop"></div>
+<div class="grid-bg"></div>
+<canvas id="fx" aria-hidden="true"></canvas>
+<div class="scanlines"></div>
+
+<div id="boot" class="boot" title="Click to skip">
+  <div class="boot-reactor">
+    <svg viewBox="0 0 200 200" aria-hidden="true">
+      <circle class="b1" cx="100" cy="100" r="90"/>
+      <circle class="b2" cx="100" cy="100" r="72"/>
+      <circle class="b3" cx="100" cy="100" r="54"/>
+      <circle class="b4" cx="100" cy="100" r="24"/>
+    </svg>
+  </div>
+  <div class="boot-title">J.A.R.V.I.S.</div>
+  <div class="boot-credit">MADE AND DESIGNED BY RICARDO SANTIAGO</div>
+  <div class="boot-lines"></div>
+  <div class="boot-progress"><div class="boot-bar"><i></i></div><span class="boot-pct">0%</span></div>
+</div>
+
+<header class="titlebar">
+  <div class="brand"><span class="dot"></span><span class="name">J.A.R.V.I.S.</span><small id="provider-label">offline</small></div>
+  <div class="title-actions">
+    <button class="update-btn" id="update-btn" hidden></button>
+    <span class="wake-badge" id="wake-badge" title="Say &quot;Hey Jarvis&quot;" hidden>● HEY JARVIS</span>
+    <button class="icon-btn mic-switch" id="micoff-btn" title="Turn microphone off" aria-label="Turn microphone off" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/><path class="slash" d="M4 3 21 20" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </button>
+    <button class="icon-btn" id="mute-btn" title="Mute voice" aria-label="Mute voice">🔊</button>
+    <button class="icon-btn" id="drawer-btn" title="Panels" aria-label="Show panels">☰</button>
+    <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
+    <div class="win-controls" id="win-controls" hidden>
+      <button class="icon-btn" id="pin-btn" title="Keep on top" aria-label="Keep on top">📌</button>
+      <button class="icon-btn" id="min-btn" title="Minimize" aria-label="Minimize">—</button>
+      <button class="icon-btn" id="max-btn" title="Maximize" aria-label="Maximize">▢</button>
+      <button class="icon-btn close" id="close-btn" title="Close" aria-label="Close">✕</button>
+    </div>
+  </div>
+</header>
+
+<main class="hud">
+  <aside class="panel left">
+    <section class="card clock-card">
+      <div id="clock">--:--</div>
+      <div id="date"></div>
+    </section>
+    <section class="card">
+      <h3>System</h3>
+      <div class="stat"><label>CPU</label><div class="bar"><i id="cpu-bar"></i></div><span id="cpu-val">0%</span></div>
+      <div class="stat"><label>MEM</label><div class="bar"><i id="mem-bar"></i></div><span id="mem-val">0%</span></div>
+      <div class="kv"><span>Host</span><b id="host">—</b></div>
+      <div class="kv"><span>Uptime</span><b id="uptime">—</b></div>
+    </section>
+    <section class="card weather-card" id="weather-card" title="Click to change the location" role="button" tabindex="0">
+      <h3>Weather <span class="wx-edit">📍 change</span></h3>
+      <div id="weather" class="muted">Click here to set your location.</div>
+    </section>
+    <section class="card">
+      <h3>Global uplink</h3>
+      <div class="uplink"><canvas id="globe" aria-hidden="true"></canvas><canvas id="radar" aria-hidden="true"></canvas></div>
+    </section>
+    <section class="card">
+      <h3>Data stream</h3>
+      <div id="datastream" class="datastream" aria-hidden="true"></div>
+    </section>
+  </aside>
+
+  <section class="core">
+    <div class="reactor-wrap">
+      <!-- 3D particle "neural orb" drawn by fx.js; it pulses with Jarvis's voice -->
+      <canvas id="orb" aria-hidden="true"></canvas>
+      <div id="caption" class="caption"></div>
+      <div id="status-text">ONLINE</div>
+    </div>
+
+    <div id="log" class="log" aria-live="polite"></div>
+
+    <form id="input-bar" autocomplete="off">
+      <button type="button" id="mic-btn" class="mic" title="Talk (Ctrl+Shift+J)" aria-label="Talk">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/></svg>
+      </button>
+      <input id="input" placeholder="Ask me anything, or tap the mic and speak…" enterkeyhint="send">
+      <button type="submit" class="send">SEND</button>
+    </form>
+  </section>
+
+  <aside class="panel right" id="right-panel">
+    <section class="card mobile-weather weather-card" title="Tap to change the location" role="button" tabindex="0">
+      <h3>Weather <span class="wx-edit">📍 change</span></h3>
+      <div id="weather-m" class="muted">Tap to set your location.</div>
+    </section>
+    <section class="card">
+      <h3>Quick commands</h3>
+      <div class="quick">
+        <button data-ask="Give me my briefing: the time, today's weather for my home city, top news headlines, my unread emails, and my reminders.">Daily briefing</button>
+        <button data-ask="Do I have any new emails?">Check email</button>
+        <button data-ask="What's the weather like?">Weather</button>
+        <button data-ask="What are the top news headlines right now?">News</button>
+        <button data-fill="Research ">Research…</button>
+        <button data-fill="Find me the best ">Shop…</button>
+        <button data-fill="Play ">Play music…</button>
+        <button data-fill="Remind me in 10 minutes to ">Reminder…</button>
+        <button data-fill="Text me ">Text me…</button>
+        <button data-fill="Write an Instagram caption about ">Draft a post…</button>
+      </div>
+    </section>
+    <section class="card">
+      <h3>Social</h3>
+      <div class="social">
+        <a href="https://x.com" target="_blank" rel="noopener">X</a>
+        <a href="https://www.instagram.com" target="_blank" rel="noopener">Instagram</a>
+        <a href="https://www.facebook.com" target="_blank" rel="noopener">Facebook</a>
+        <a href="https://www.tiktok.com" target="_blank" rel="noopener">TikTok</a>
+        <a href="https://www.youtube.com" target="_blank" rel="noopener">YouTube</a>
+        <a href="https://www.snapchat.com" target="_blank" rel="noopener">Snapchat</a>
+        <a href="https://discord.com/app" target="_blank" rel="noopener">Discord</a>
+        <a href="https://www.linkedin.com" target="_blank" rel="noopener">LinkedIn</a>
+        <a href="https://www.reddit.com" target="_blank" rel="noopener">Reddit</a>
+      </div>
+    </section>
+    <section class="card">
+      <h3>Tasks</h3>
+      <ul id="tasks" class="tasks"><li class="muted">Say "add buy milk to my list".</li></ul>
+    </section>
+    <section class="card">
+      <h3>Reminders</h3>
+      <ul id="reminders" class="reminders"><li class="muted">None set.</li></ul>
+    </section>
+  </aside>
+</main>
+
+<!-- Passcode screen for phones / other devices -->
+<div id="lock" class="lock" hidden>
+  <form id="lock-form" class="lock-box">
+    <div class="lock-title">J.A.R.V.I.S.</div>
+    <p id="lock-msg">Enter the passcode to continue.</p>
+    <input id="lock-input" type="password" inputmode="text" placeholder="Passcode" autocomplete="current-password">
+    <button class="primary" type="submit">Unlock</button>
+  </form>
+</div>
+
+<dialog id="settings">
+  <form id="settings-form" method="dialog">
+    <div class="dlg-head">
+      <h2>Settings</h2>
+      <button type="button" class="icon-btn" id="settings-x" aria-label="Close">✕</button>
+    </div>
+    <p class="notice" id="remote-notice" hidden>You're on another device. Settings can only be changed on the main computer, except the options under <b>This device</b>.</p>
+    <nav class="tabs" id="tabs" aria-label="Settings sections">
+      <button type="button" data-tab="ai" class="active"><span>🧠</span>AI brain</button>
+      <button type="button" data-tab="you"><span>👤</span>You &amp; name</button>
+      <button type="button" data-tab="voice"><span>🔊</span>Voice</button>
+      <button type="button" data-tab="device"><span>💻</span>This device</button>
+      <button type="button" data-tab="keys"><span>🔑</span>API keys</button>
+      <button type="button" data-tab="email"><span>✉️</span>Email</button>
+      <button type="button" data-tab="music"><span>🎵</span>Music</button>
+      <button type="button" data-tab="phone"><span>📞</span>Texts &amp; calls</button>
+      <button type="button" data-tab="trading"><span>📈</span>Trading</button>
+      <button type="button" data-tab="access"><span>📱</span>Phone access</button>
+    </nav>
+
+    <section class="tab" data-tab="ai">
+      <label>AI platform
+        <select name="provider">
+          <option value="free">Free AI (no subscription)</option>
+          <option value="groq">Groq (free key, fast)</option>
+          <option value="openai">OpenAI (ChatGPT)</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="grok">xAI (Grok)</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="openrouter">OpenRouter (hundreds of models)</option>
+          <option value="ollama">Ollama (free, runs on this PC)</option>
+          <option value="custom">Other (OpenAI-compatible)</option>
+        </select>
+      </label>
+      <label class="not-free">Model <input name="model" list="model-list" spellcheck="false"></label>
+      <div class="only-free free-box">
+        <p><b>Jarvis works for free, no subscription needed.</b> Free mode automatically uses the best free AI you have:</p>
+        <p class="hint">Every online AI has a daily limit on its free plan, so Jarvis <b>stacks several</b>: when one runs out, he switches to the next by himself. Add as many free keys as you like (no credit card for any of these), and paste them in <b>API keys</b>:</p>
+        <ul>
+          <li><b>Groq</b>: fastest. <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Get free key</a> <span id="free-groq"></span></li>
+          <li><b>Cerebras</b>: very fast, big free plan. <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener">Get free key</a> <span id="free-cerebras"></span></li>
+          <li><b>Google Gemini</b>: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get free key</a> <span id="free-gemini"></span></li>
+          <li><b>Mistral</b>: big free plan. <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">Get free key</a> <span id="free-mistral"></span></li>
+          <li><b>OpenRouter</b>: free models. <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get free key</a> <span id="free-openrouter"></span></li>
+        </ul>
+        <p><b>Truly unlimited:</b> Ollama runs an AI on this computer itself. No internet, no limits, fully private (needs 8 GB+ memory; about a 5 GB download).</p>
+        <div class="row"><button type="button" id="ollama-setup">Set up unlimited AI on this PC</button><span id="ollama-status" class="muted"></span></div>
+        <p class="hint">Nothing set up at all? Jarvis still answers with a free starter AI, but slowly (about one reply every 30 seconds).</p>
+        <p class="hint">Paid AI (ChatGPT, Claude, Grok...) is optional: pick it above any time. Note: a ChatGPT Plus or Claude Pro subscription can't be used in apps. Those need a separate pay-per-use API key.</p>
+      </div>
+      <datalist id="model-list"></datalist>
+      <label class="only-custom">Base URL <input name="customBaseUrl" placeholder="https://example.com/v1" spellcheck="false"></label>
+      <label class="only-ollama">Ollama URL <input name="ollamaUrl" spellcheck="false"></label>
+      <p class="hint" id="provider-hint"></p>
+      <label>Browser for live research (opens on screen so you can watch)
+        <select name="browser">
+          <option value="auto">Automatic (Chrome, then Edge, then Brave)</option>
+          <option value="chrome">Google Chrome</option>
+          <option value="msedge">Microsoft Edge</option>
+          <option value="brave">Brave</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="tab" data-tab="keys" hidden>
+      <p class="hint">Keys are saved encrypted on this computer only. Leave a box empty to keep the saved key.</p>
+      <div class="keys" id="keys"></div>
+    </section>
+
+    <section class="tab" data-tab="you" hidden>
+      <label>Assistant's name (you can rename Jarvis) <input name="assistantName" placeholder="Jarvis" maxlength="20"></label>
+      <p class="hint">The wake word follows the name ("Hey Friday"). It works best with a common English word or name.</p>
+      <label>Your name <input name="userName" placeholder="Tony"></label>
+      <label>How to say it (only if the voice gets it wrong) <input name="namePronounce" placeholder="e.g. Sahn-tee"></label>
+      <button type="button" id="test-name">Hear Jarvis say my name</button>
+      <label>Jarvis calls you
+        <input name="userTitle" list="titles" placeholder="sir">
+        <datalist id="titles"><option value="sir"><option value="ma'am"><option value="boss"><option value="chief"></datalist>
+      </label>
+      <label>Home city (for weather) <input name="homeCity" placeholder="Austin, Texas"></label>
+      <div class="row"><button type="button" id="detect-city">📍 Detect my location</button><span id="detect-status" class="muted"></span></div>
+      <label>Units
+        <select name="units"><option value="imperial">°F / mph</option><option value="metric">°C / km/h</option></select>
+      </label>
+    </section>
+
+    <section class="tab" data-tab="voice" hidden>
+      <label>Jarvis's voice
+        <select name="voiceEngine">
+          <option value="piper">British AI voice (free, offline)</option>
+          <option value="openai">OpenAI voice (British butler, needs OpenAI key)</option>
+          <option value="elevenlabs">ElevenLabs (design your own voice)</option>
+          <option value="system">Computer's built-in voice (free, basic)</option>
+        </select>
+      </label>
+      <label class="only-piper">Which voice <select name="piperVoice"></select></label>
+      <p class="hint only-piper">Each voice downloads once, then works offline. Try a few with "Test voice". "Charles" and "Henry" are the closest to a refined AI butler; "Norman" and "John" sound like older gentlemen. Voices that copy real actors aren't included.</p>
+      <p class="hint only-elevenlabs">Closest match: in ElevenLabs open <b>Voices → Add voice → Voice Design</b> and describe it, e.g. "Refined, calm, middle-aged British male AI butler, RP accent, crisp and precise, dry understated wit, slightly digital polish." Save it, then paste its Voice ID below. For an older butler try "elderly, warm, slightly gravelly London gentleman butler, unhurried and kind". Describe a style, don't copy a real actor.</p>
+      <label class="only-system">Built-in voice <select name="systemVoice"></select></label>
+      <label class="only-system only-piper">Speed <input name="rate" type="range" min="0.6" max="1.5" step="0.05"></label>
+      <label class="only-system">Pitch <input name="pitch" type="range" min="0.5" max="1.5" step="0.05"></label>
+      <label class="only-openai">OpenAI voice
+        <select name="openaiVoice">
+          <option>fable</option><option>onyx</option><option>ash</option><option>ballad</option><option>echo</option><option>sage</option><option>alloy</option><option>verse</option>
+        </select>
+      </label>
+      <label class="only-elevenlabs">ElevenLabs voice ID <input name="elevenVoiceId" spellcheck="false"></label>
+      <label>Listening (speech to text)
+        <select name="sttEngine">
+          <option value="auto">Automatic (free offline engine, or Groq/OpenAI if you have a key)</option>
+          <option value="openai">OpenAI Whisper (needs OpenAI key)</option>
+          <option value="groq">Groq Whisper (free key)</option>
+          <option value="off">Off (type only)</option>
+        </select>
+      </label>
+      <label>Language &amp; accent I speak
+        <select name="sttLanguage">
+          <option value="auto">Automatic (detect it)</option>
+          <option value="en-us">English: American</option>
+          <option value="en-gb">English: British</option>
+          <option value="en-in">English: Indian</option>
+          <option value="en-au">English: Australian</option>
+          <option value="es">Spanish (Español)</option>
+          <option value="es-mx">Spanish: Mexico / Latin America</option>
+          <option value="pt">Portuguese (Português)</option>
+          <option value="fr">French (Français)</option>
+          <option value="de">German (Deutsch)</option>
+          <option value="it">Italian (Italiano)</option>
+          <option value="hi">Hindi (हिन्दी)</option>
+        </select>
+      </label>
+      <label>Words I use (names, places, slang) <input name="sttWords" placeholder="e.g. Santi&amp;Friends, Nella, Bayamón"></label>
+      <p class="hint"><b>Best for accents:</b> with a free Groq key (or an OpenAI key), Jarvis hears you with Whisper, which understands accents from all over the world. Without a key it uses the free offline engine; other languages download their own offline model once. Jarvis answers in the language you speak.</p>
+      <p class="hint">On phones, Jarvis uses the phone's own speech recognition when it can. Tip: on Windows, add the "English (United Kingdom)" speech pack in Windows Settings → Time &amp; language → Speech for a British built-in voice.</p>
+      <button type="button" id="test-voice">Test voice</button>
+    </section>
+
+    <section class="tab" data-tab="email" hidden>
+      <label>Email service
+        <select name="emailPreset">
+          <option value="gmail">Gmail</option>
+          <option value="yahoo">Yahoo</option>
+          <option value="icloud">iCloud</option>
+          <option value="outlook">Outlook / Microsoft 365</option>
+          <option value="aol">AOL</option>
+          <option value="zoho">Zoho</option>
+          <option value="custom">Other (IMAP)</option>
+        </select>
+      </label>
+      <label>Email address <input name="emailUser" type="email" spellcheck="false"></label>
+      <label>App password <input name="key-email" type="password" autocomplete="off" placeholder="leave empty to keep"></label>
+      <div class="only-emailcustom">
+        <label>IMAP server <input name="imapHost" spellcheck="false"></label>
+        <label>IMAP port <input name="imapPort" type="number"></label>
+        <label>SMTP server <input name="smtpHost" spellcheck="false"></label>
+        <label>SMTP port <input name="smtpPort" type="number"></label>
+      </div>
+      <p class="hint">Use an <b>app password</b>, not your normal password. Gmail: myaccount.google.com/apppasswords (needs 2-step verification). Yahoo/AOL: Account security → Generate app password. iCloud: appleid.apple.com → App-Specific Passwords. Jarvis reads email to answer you, and only sends after you tap Send.</p>
+    </section>
+
+    <section class="tab" data-tab="music" hidden>
+      <label>Default music service
+        <select name="musicService"><option value="spotify">Spotify</option><option value="apple_music">Apple Music</option></select>
+      </label>
+      <label>Spotify Client ID <input name="spotifyClientId" spellcheck="false"></label>
+      <p class="hint" id="spotify-help"></p>
+      <div class="row"><button type="button" id="spotify-connect">Connect Spotify</button><button type="button" id="spotify-disconnect">Disconnect</button><span id="spotify-status" class="muted"></span></div>
+      <p class="hint">Apple Music: on a Mac, Jarvis controls the Music app directly. On Windows it uses the play/pause/skip media keys, and opens songs in Apple Music for you.</p>
+    </section>
+
+    <section class="tab" data-tab="phone" hidden>
+      <p class="hint">Jarvis texts and calls you through Twilio (twilio.com, about $1/month for a number plus a cent or two per text or call). It can only reach the number below.</p>
+      <label>Your phone number <input name="myNumber" placeholder="+15125550123" inputmode="tel"></label>
+      <label>Twilio Account SID <input name="twilioSid" spellcheck="false" placeholder="AC…"></label>
+      <label>Twilio Auth Token <input name="key-twilio" type="password" autocomplete="off" placeholder="leave empty to keep"></label>
+      <label>Twilio phone number <input name="twilioFrom" placeholder="+15125550199" inputmode="tel"></label>
+    </section>
+
+    <section class="tab" data-tab="trading" hidden>
+      <p class="notice">Jarvis is <b>not a financial advisor</b> and won't tell you what to buy. He shows prices and your account, and prepares orders <b>you</b> ask for. Every order needs you to tap <b>Confirm order</b> on this computer. Trading can lose money.</p>
+      <h4 class="sub">Stocks &amp; crypto: Alpaca</h4>
+      <label>Alpaca API key ID <input name="key-alpacaKey" type="password" autocomplete="off" placeholder="paste key"></label>
+      <label>Alpaca secret key <input name="key-alpacaSecret" type="password" autocomplete="off" placeholder="paste secret"></label>
+      <label>Account <select name="alpacaMode"><option value="paper">Paper trading (practice money)</option><option value="live">Live (real money)</option></select></label>
+      <p class="hint">Free account at <a href="https://alpaca.markets" target="_blank" rel="noopener">alpaca.markets</a> → dashboard → API keys. Paper and live accounts have different keys.</p>
+      <h4 class="sub">Forex: OANDA</h4>
+      <label>OANDA API token <input name="key-oandaToken" type="password" autocomplete="off" placeholder="paste token"></label>
+      <label>OANDA account ID <input name="oandaAccount" placeholder="101-001-1234567-001" spellcheck="false"></label>
+      <label>Account <select name="oandaMode"><option value="practice">Practice (demo money)</option><option value="live">Live (real money)</option></select></label>
+      <p class="hint">Free practice account at <a href="https://www.oanda.com" target="_blank" rel="noopener">oanda.com</a> → My Account → Manage API Access.</p>
+      <label class="check danger-check"><input type="checkbox" name="liveConfirmed"> I understand "Live" uses my real money and I'm responsible for every order I confirm.</label>
+    </section>
+
+    <section class="tab" data-tab="access" hidden>
+      <label class="check"><input type="checkbox" name="remoteEnabled"> Let phones and other devices use Jarvis</label>
+      <label>Passcode for other devices <input name="remotePasscode" type="password" autocomplete="new-password" placeholder="leave empty to keep"></label>
+      <div id="lan-urls" class="hint"></div>
+      <p class="hint">Phones on the same Wi-Fi can open the link above. For use anywhere (and for the phone microphone), see "Use Jarvis from anywhere" in the README. Anyone with the passcode uses <b>your</b> AI account, email and music, so only share it with people you trust.</p>
+    </section>
+
+    <section class="tab" data-tab="device" hidden>
+      <label>Microphone <select name="micId"><option value="">System default</option></select></label>
+      <label>Speaker <select name="speakerId"><option value="">System default</option></select></label>
+      <p class="hint" id="audio-hint">The OpenAI/ElevenLabs voices and the wake chime use this speaker. The free built-in voice always uses the system default speaker.</p>
+      <label class="check"><input type="checkbox" name="wakeWord"> Wake up when I say "Jarvis" or "Hey Jarvis"</label>
+      <p class="hint">Listens on this device only, fully offline. Nothing is sent anywhere until Jarvis wakes up. (Phones need the https link.)</p>
+      <label class="check"><input type="checkbox" name="deviceMute"> Mute the assistant's voice on this device</label>
+      <label class="check"><input type="checkbox" name="voiceFx"> Hologram voice effect (OpenAI/ElevenLabs voices)</label>
+      <label class="check only-desktop"><input type="checkbox" name="autoStart"> Start automatically when my computer turns on</label>
+      <p class="hint only-desktop" id="autostart-hint" hidden>Available in the installed app.</p>
+      <div class="only-desktop monitors">
+        <label>Monitors <span id="monitor-count" class="muted"></span>
+          <select name="displayMode">
+            <option value="single">This screen only</option>
+            <option value="all">All my screens (each shows a different hologram)</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="clickThrough"> Let my mouse click through the extra screens</label>
+      </div>
+      <label class="only-desktop">Background
+        <select name="bgStyle">
+          <option value="clear">Clear hologram (see-through)</option>
+          <option value="frosted">Frosted glass (blurred, easier to read)</option>
+          <option value="solid">Solid dark</option>
+        </select>
+      </label>
+      <label class="only-desktop">How see-through <input name="glass" type="range" min="0" max="95" step="5"></label>
+      <p class="hint only-desktop">Frosted glass uses the system blur on Windows 11 and Mac. On older Windows it shows a darker tint instead.</p>
+      <label class="check only-desktop"><input type="checkbox" name="onTop"> Keep Jarvis on top of other windows</label>
+      <button type="button" id="forget-pass">Forget passcode on this device</button>
+    </section>
+
+    <p class="credit">J.A.R.V.I.S. <span id="app-version"></span> · Made and designed by <b>Ricardo Santiago</b></p>
+    <div class="dlg-actions">
+      <button type="button" id="clear-keys" class="danger owner-only">Forget all keys</button>
+      <span class="spacer"></span>
+      <button type="button" id="settings-cancel">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="fx.js"></script>
+<script src="wake.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

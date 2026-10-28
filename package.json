@@ -1,0 +1,85 @@
+{
+  "name": "jarvis-assistant",
+  "productName": "Jarvis",
+  "version": "1.0.0",
+  "description": "An Iron Man style AI assistant for desktop and phone that works with ChatGPT, Claude, Grok, Gemini, Ollama and more.",
+  "main": "main.js",
+  "author": "Ricardo Santiago",
+  "updateRepo": "santiagogsx/jarvis-assistant",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server/index.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "imapflow": "^1.0.164",
+    "mailparser": "^3.7.1",
+    "nodemailer": "^6.9.16",
+    "playwright-core": "^1.48.2",
+    "vosk-browser": "^0.0.8"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.santiandfriends.jarvis",
+    "productName": "Jarvis",
+    "copyright": "Made and designed by Ricardo Santiago",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "santiagogsx",
+        "repo": "jarvis-assistant",
+        "releaseType": "release"
+      }
+    ],
+    "asarUnpack": ["node_modules/playwright-core/**"],
+    "files": [
+      "main.js",
+      "preload.js",
+      "server/**/*",
+      "public/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Jarvis",
+      "license": "build/license.txt"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "identity": "-",
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Jarvis listens to your voice when you press the microphone button."
+      }
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

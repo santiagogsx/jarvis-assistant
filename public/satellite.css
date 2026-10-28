@@ -1,0 +1,40 @@
+/* Extra-monitor hologram displays. Fully transparent background: only the
+   holographic elements float over the screen. */
+body.satellite { background: transparent; overflow: hidden; }
+.satellite #fx { opacity: .55; }
+
+.sat-head { position: fixed; top: 18px; left: 24px; display: flex; align-items: baseline; gap: 10px; }
+.sat-head .name { font: 700 16px var(--font-hud); letter-spacing: .3em; color: var(--cyan); text-shadow: 0 0 12px var(--cyan-dim); }
+.sat-head small { color: var(--muted); font: 500 11px var(--font-hud); letter-spacing: .25em; }
+.sat-head .dot { align-self: center; }
+
+.sat-grid { position: fixed; inset: 60px 28px 28px; display: grid; gap: 22px; }
+.sat-grid .card { background-color: rgba(8, 28, 42, .32); }
+
+/* "systems": globe in the middle, diagnostics around it */
+.view-systems { grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr) minmax(240px, 1fr); grid-template-rows: auto auto 1fr; }
+.sat-clock { grid-column: 1; grid-row: 1; text-align: center; }
+.sat-system { grid-column: 1; grid-row: 2; }
+.sat-stream { grid-column: 1; grid-row: 3; align-self: start; }
+.sat-globe { grid-column: 2; grid-row: 1 / 4; display: grid; place-items: center; position: relative; }
+.sat-globe canvas { width: min(100%, 72vh); aspect-ratio: 1; filter: drop-shadow(0 0 18px rgba(95, 227, 255, .35)); }
+.sat-caption { position: absolute; bottom: 4%; font: 500 12px var(--font-hud); letter-spacing: .5em; color: var(--cyan-dim); }
+.sat-weather { grid-column: 3; grid-row: 1; }
+.sat-radar { grid-column: 3; grid-row: 2 / 4; align-self: start; }
+.sat-radar canvas { width: 100%; aspect-ratio: 1; display: block; }
+
+/* "intel": news on the left, orb in the middle, clock + reminders on the right */
+.view-intel { grid-template-columns: minmax(280px, 1.2fr) minmax(0, 1.6fr) minmax(240px, 1fr); grid-template-rows: auto 1fr; }
+.sat-news { grid-column: 1; grid-row: 1 / 3; align-self: start; max-height: 100%; overflow: hidden; }
+.news { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.news li { padding-left: 10px; border-left: 2px solid var(--cyan-dim); font-size: 16px; line-height: 1.3; animation: rise .4s ease-out both; }
+.news small { display: block; color: var(--muted); font-size: 12px; letter-spacing: .08em; margin-top: 2px; }
+.sat-orb { grid-column: 2; grid-row: 1 / 3; display: grid; place-items: center; }
+.sat-orb .reactor-wrap { width: min(100%, 62vh); }
+.sat-bigclock { grid-column: 3; grid-row: 1; text-align: center; }
+#clock2 { font: 700 40px var(--font-hud); color: var(--cyan); text-shadow: 0 0 16px var(--cyan-dim); white-space: nowrap; }
+#date2 { color: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+.sat-reminders { grid-column: 3; grid-row: 2; align-self: start; }
+
+/* no 3D tilt here: these windows don't follow the mouse */
+.satellite .panel, .satellite .core { transform: none; }

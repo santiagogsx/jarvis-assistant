@@ -1,0 +1,45 @@
+# Builds the Windows installer (.exe) and the Mac app (.dmg) on GitHub's own
+# Windows and Mac computers, for free.
+#
+# Publishing an update for everyone:
+#   1. Change "version" in package.json (e.g. 1.0.0 -> 1.1.0)
+#   2. Push a tag with that version:  git tag v1.1.0  then  git push --tags
+#   3. This workflow builds both installers and publishes them as a GitHub
+#      Release. Every installed copy of Jarvis finds the update by itself.
+#
+# Running it by hand (Actions tab -> Build installers -> Run workflow) just
+# builds the files without publishing an update.
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Build (and publish when a version tag was pushed)
+        run: npx electron-builder --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg

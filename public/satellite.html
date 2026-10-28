@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'">
+<title>Jarvis display</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="satellite.css">
+</head>
+<!-- A hologram display for an extra monitor. Two different layouts ("systems"
+     and "intel") so multiple monitors never look like a mirror. -->
+<body class="desktop satellite" data-mode="idle">
+<canvas id="fx" aria-hidden="true"></canvas>
+
+<header class="sat-head">
+  <span class="dot"></span><span class="name">J.A.R.V.I.S.</span><small id="sat-label">DISPLAY</small>
+</header>
+
+<main class="sat-grid view-systems" id="view-systems" hidden>
+  <section class="card sat-clock"><div id="clock">--:--</div><div id="date"></div></section>
+  <section class="card sat-system">
+    <h3>System diagnostics</h3>
+    <div class="stat"><label>CPU</label><div class="bar"><i id="cpu-bar"></i></div><span id="cpu-val">0%</span></div>
+    <div class="stat"><label>MEM</label><div class="bar"><i id="mem-bar"></i></div><span id="mem-val">0%</span></div>
+    <div class="kv"><span>Host</span><b id="host">—</b></div>
+    <div class="kv"><span>Uptime</span><b id="uptime">—</b></div>
+  </section>
+  <section class="sat-globe"><canvas id="globe" aria-hidden="true"></canvas><div class="sat-caption">GLOBAL UPLINK</div></section>
+  <section class="card sat-weather"><h3>Atmospherics</h3><div id="weather" class="muted">No home city set.</div></section>
+  <section class="card sat-radar"><h3>Perimeter scan</h3><canvas id="radar" aria-hidden="true"></canvas></section>
+  <section class="card sat-stream"><h3>Data stream</h3><div id="datastream" class="datastream" aria-hidden="true"></div></section>
+</main>
+
+<main class="sat-grid view-intel" id="view-intel" hidden>
+  <section class="card sat-news"><h3>Intel feed</h3><ul id="news" class="news"><li class="muted">Loading headlines…</li></ul></section>
+  <section class="sat-orb">
+    <div class="reactor-wrap"><canvas id="orb" aria-hidden="true"></canvas><div id="status-text">ONLINE</div></div>
+  </section>
+  <section class="card sat-bigclock"><div id="clock2">--:--</div><div id="date2"></div></section>
+  <section class="card sat-reminders"><h3>Reminders &amp; tasks</h3><ul id="reminders" class="reminders"><li class="muted">Nothing scheduled.</li></ul></section>
+</main>
+
+<script src="fx.js"></script>
+<script src="satellite.js"></script>
+</body>
+</html>

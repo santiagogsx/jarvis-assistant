@@ -1,0 +1,11 @@
+J.A.R.V.I.S. Personal AI Assistant
+
+Made and designed by Ricardo Santiago
+
+Thank you for installing Jarvis.
+
+Jarvis connects to the AI platform you choose (ChatGPT, Claude, Grok, Gemini and others) using your own API keys. Your keys and passwords are stored encrypted on this computer. Jarvis prepares posts, emails and orders for you, but you always make the final tap: it never posts, sends or buys on its own.
+
+This software is provided "as is", without warranty of any kind.
+
+J.A.R.V.I.S. and Iron Man are trademarks of Marvel. This is a personal fan project.

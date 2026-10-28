@@ -1,0 +1,184 @@
+// Music: full Spotify control through the Spotify Web API (after the owner
+// logs in once), Apple Music control through the Music app on a Mac, and
+// system media keys on Windows (these drive Spotify, Apple Music, YouTube...).
+const crypto = require('crypto');
+const { execFile } = require('child_process');
+
+const SCOPES = 'user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private';
+const enc = encodeURIComponent;
+
+function createMusic(store) {
+  let pkce = null;                 // { verifier, state, redirect }
+  let access = { token: '', expires: 0 };
+
+  const redirectUri = port => `http://127.0.0.1:${port}/api/spotify/callback`;
+
+  function loginUrl(port) {
+    const s = store.get();
+    const clientId = s.music.spotifyClientId;
+    if (!clientId) throw new Error('Add your Spotify Client ID in Settings → Music first.');
+    const verifier = crypto.randomBytes(48).toString('base64url');
+    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    pkce = { verifier, state: crypto.randomBytes(12).toString('hex'), redirect: redirectUri(port) };
+    return 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
+      client_id: clientId, response_type: 'code', redirect_uri: pkce.redirect,
+      code_challenge_method: 'S256', code_challenge: challenge, scope: SCOPES, state: pkce.state,
+    });
+  }
+
+  async function tokenRequest(params) {
+    const r = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: store.get().music.spotifyClientId, ...params }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error_description || d.error || `Spotify login failed (HTTP ${r.status})`);
+    access = { token: d.access_token, expires: Date.now() + (d.expires_in - 60) * 1000 };
+    if (d.refresh_token) store.setSecret('spotifyRefresh', d.refresh_token);
+  }
+
+  async function finishLogin(code, state) {
+    if (!pkce || state !== pkce.state) throw new Error('This Spotify login link expired. Start again from Settings.');
+    const { verifier, redirect } = pkce;
+    pkce = null;
+    await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: redirect, code_verifier: verifier });
+  }
+
+  function spotifyConnected() {
+    const s = store.get();
+    return !!(s.music.spotifyClientId && s.keys.spotifyRefresh);
+  }
+
+  function disconnect() {
+    store.setSecret('spotifyRefresh', '');
+    access = { token: '', expires: 0 };
+  }
+
+  async function token() {
+    if (access.token && Date.now() < access.expires) return access.token;
+    const refresh = store.get().keys.spotifyRefresh;
+    if (!refresh) throw new Error('Spotify is not connected.');
+    await tokenRequest({ grant_type: 'refresh_token', refresh_token: refresh });
+    return access.token;
+  }
+
+  async function spotify(method, path, body) {
+    const r = await fetch('https://api.spotify.com/v1' + path, {
+      method,
+      headers: { authorization: `Bearer ${await token()}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 204) return null;
+    const d = await r.json().catch(() => null);
+    if (!r.ok) {
+      const reason = d?.error?.reason || d?.error?.message || `HTTP ${r.status}`;
+      if (reason === 'NO_ACTIVE_DEVICE' || r.status === 404) throw new Error('Spotify has no active device. Open Spotify on your phone or computer and play anything once, then ask again.');
+      if (r.status === 403) throw new Error('Spotify only allows remote control with a Spotify Premium account.');
+      throw new Error('Spotify: ' + reason);
+    }
+    return d;
+  }
+
+  async function spotifyControl(action, { query, kind = 'track', volume } = {}) {
+    switch (action) {
+      case 'play': {
+        if (!query) { await spotify('PUT', '/me/player/play'); return { ok: true, said: 'Resumed.' }; }
+        const type = ['track', 'artist', 'album', 'playlist'].includes(kind) ? kind : 'track';
+        const d = await spotify('GET', `/search?q=${enc(query)}&type=${type}&limit=1`);
+        const item = d?.[type + 's']?.items?.find(Boolean);
+        if (!item) return { error: `Couldn't find ${type} "${query}" on Spotify.` };
+        await spotify('PUT', '/me/player/play', type === 'track' ? { uris: [item.uri] } : { context_uri: item.uri });
+        const by = item.artists ? ' by ' + item.artists.map(a => a.name).join(', ') : item.owner ? ' by ' + item.owner.display_name : '';
+        return { ok: true, playing: `${item.name}${by}`, type };
+      }
+      case 'pause': await spotify('PUT', '/me/player/pause'); return { ok: true };
+      case 'resume': await spotify('PUT', '/me/player/play'); return { ok: true };
+      case 'next': await spotify('POST', '/me/player/next'); return { ok: true };
+      case 'previous': await spotify('POST', '/me/player/previous'); return { ok: true };
+      case 'volume': {
+        const v = Math.min(Math.max(Math.round(Number(volume)), 0), 100);
+        if (Number.isNaN(v)) return { error: 'Give a volume from 0 to 100.' };
+        await spotify('PUT', `/me/player/volume?volume_percent=${v}`);
+        return { ok: true, volume: v };
+      }
+      case 'now_playing': {
+        const d = await spotify('GET', '/me/player/currently-playing');
+        if (!d?.item) return { playing: false };
+        return { playing: d.is_playing, track: d.item.name, artist: d.item.artists?.map(a => a.name).join(', '), album: d.item.album?.name };
+      }
+      default: return { error: 'Unknown music action ' + action };
+    }
+  }
+
+  function run(cmd, args) {
+    return new Promise((resolve, reject) =>
+      execFile(cmd, args, { timeout: 15000, windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(String(stdout).trim()))));
+  }
+
+  // Windows media keys work with whichever player is active.
+  const VK = { play: 0xB3, pause: 0xB3, resume: 0xB3, next: 0xB0, previous: 0xB1 };
+  async function mediaKey(action) {
+    const vk = VK[action];
+    if (!vk) return { error: `"${action}" isn't available with media keys on this computer.` };
+    const ps = `$s='[DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e);';` +
+      `Add-Type -MemberDefinition $s -Name K -Namespace W;[W.K]::keybd_event(${vk},0,0,[UIntPtr]::Zero);[W.K]::keybd_event(${vk},0,2,[UIntPtr]::Zero)`;
+    await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    return { ok: true, note: 'Sent a media key to whatever music app is playing on the computer.' };
+  }
+
+  const asText = s => '"' + String(s).replace(/["\\]/g, '') + '"';
+  async function macApp(appName, action, { query, volume } = {}) {
+    const tell = body => run('osascript', ['-e', `tell application "${appName}" to ${body}`]);
+    switch (action) {
+      case 'play':
+        if (!query) { await tell('play'); return { ok: true }; }
+        if (appName === 'Music') {
+          try {
+            const name = await run('osascript', ['-e',
+              `tell application "Music"\nset r to (every track of library playlist 1 whose name contains ${asText(query)} or artist contains ${asText(query)})\nif r is {} then return ""\nplay item 1 of r\nreturn (name of item 1 of r) & " by " & (artist of item 1 of r)\nend tell`]);
+            if (name) return { ok: true, playing: name };
+          } catch {}
+          return { ok: false, open_url: `https://music.apple.com/search?term=${enc(query)}`, note: 'Not in the music library, so I opened it in Apple Music to play.' };
+        }
+        return { ok: false, open_url: `https://open.spotify.com/search/${enc(query)}` };
+      case 'pause': await tell('pause'); return { ok: true };
+      case 'resume': await tell('play'); return { ok: true };
+      case 'next': await tell('next track'); return { ok: true };
+      case 'previous': await tell('previous track'); return { ok: true };
+      case 'volume': await tell(`set sound volume to ${Math.min(Math.max(Math.round(Number(volume) || 50), 0), 100)}`); return { ok: true };
+      case 'now_playing': {
+        const r = await run('osascript', ['-e', `tell application "${appName}" to if player state is playing then return (name of current track) & " — " & (artist of current track)`]).catch(() => '');
+        return r ? { playing: true, track: r } : { playing: false };
+      }
+      default: return { error: 'Unknown music action ' + action };
+    }
+  }
+
+  // service: 'spotify' | 'apple_music'. local = request came from the host computer.
+  async function control({ service, action, query, kind, volume }, { local }) {
+    service = service || store.get().music.service || 'spotify';
+    action = action || 'play';
+
+    if (service === 'spotify' && spotifyConnected()) return spotifyControl(action, { query, kind, volume });
+
+    const searchUrl = service === 'apple_music'
+      ? `https://music.apple.com/search?term=${enc(query || '')}`
+      : `https://open.spotify.com/search/${enc(query || '')}`;
+
+    // A phone/remote user: just open the song in their own music app.
+    if (!local) {
+      if (action === 'play' && query) return { ok: true, open_url: searchUrl, note: 'Opened it on your device. Tap play.' };
+      return { error: service === 'spotify' ? 'Connect Spotify in Settings on the main computer to control playback from here.' : 'Apple Music can only be controlled on the main computer.' };
+    }
+
+    if (process.platform === 'darwin') return macApp(service === 'apple_music' ? 'Music' : 'Spotify', action, { query, volume });
+    if (action === 'play' && query) return { ok: true, open_url: searchUrl, note: 'Opened the search. Tap play (connect Spotify in Settings for hands-free play).' };
+    if (process.platform === 'win32') return mediaKey(action);
+    return { error: 'Music control is not supported on this system yet.' };
+  }
+
+  return { control, loginUrl, finishLogin, spotifyConnected, disconnect, redirectUri };
+}
+
+module.exports = { createMusic };
