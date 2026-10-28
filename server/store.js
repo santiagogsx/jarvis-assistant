@@ -57,6 +57,10 @@ const DEFAULTS = {
     pitch: 0.9,
     openaiVoice: 'fable',
     elevenVoiceId: '',
+    // Cloned voice made in VoiceStudio (free, local app with an OpenAI-style voice API).
+    vsUrl: 'http://127.0.0.1:3900',
+    vsVoice: '',
+    cloneConsent: false,
   },
   sttEngine: 'auto',
   sttLanguage: 'auto',   // Whisper language hint + which offline model to use

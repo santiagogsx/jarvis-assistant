@@ -541,6 +541,12 @@ dialog#settings { width: min(900px, calc(100% - 16px)); max-height: calc(100% - 
 .folder-list li span { flex: 1; }
 .folder-list li button { padding: 4px 8px; cursor: pointer; border: 1px solid rgba(255, 107, 90, .5); background: none; color: #ffb4aa; }
 
+.vs-box { display: grid; gap: 10px; font-size: 15px; }
+.vs-box p { margin: 0; }
+#vs-voice { flex: 1; min-width: 0; height: 42px; padding: 0 10px; font-size: 16px; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid rgba(95, 227, 255, .3); }
+#vs-status.good { color: #7dffb2; }
+#vs-status.bad { color: #ffb4aa; }
+
 /* Settings → Make it fast */
 .tabs button.fast-tab { color: var(--amber); }
 .tabs button.fast-tab.active { color: #fff; border-color: var(--amber); background: rgba(255, 179, 71, .15); }

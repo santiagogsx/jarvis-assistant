@@ -1163,6 +1163,7 @@
     $$('.only-piper').forEach(el => { el.hidden = ve !== 'piper' && !(el.classList.contains('only-system') && ve === 'system'); });
     $$('.only-system.only-piper').forEach(el => { el.hidden = ve !== 'system' && ve !== 'piper'; });
     $$('.only-openai').forEach(el => { el.hidden = ve !== 'openai'; });
+    $$('.only-voicestudio').forEach(el => { el.hidden = ve !== 'voicestudio'; });
     $$('.only-elevenlabs').forEach(el => { el.hidden = ve !== 'elevenlabs'; });
     $$('.only-emailcustom').forEach(el => { el.hidden = F('emailPreset').value !== 'custom'; });
     $$('.only-desktop').forEach(el => { el.hidden = !desk; });
@@ -1202,6 +1203,10 @@
     F('units').value = s.units;
     F('voiceEngine').value = s.voice.engine;
     await fillPiperVoices();
+    F('vsUrl').value = s.voice.vsUrl || '';
+    F('cloneConsent').checked = !!s.voice.cloneConsent;
+    if (s.voice.vsVoice) $('#vs-voice').innerHTML = `<option value="${esc(s.voice.vsVoice)}">${esc(s.voice.vsVoice)}</option>`;
+    if (s.voice.engine === 'voicestudio') fillVsVoices();
     F('rate').value = s.voice.rate;
     F('pitch').value = s.voice.pitch;
     F('openaiVoice').value = s.voice.openaiVoice;
@@ -1379,6 +1384,10 @@
     state.formModels[p] = F('model').value.trim();
     const keys = {};
     $$('#settings-form input[name^="key-"]').forEach(i => { if (i.value.trim()) keys[i.name.slice(4)] = i.value.trim(); });
+    if (F('voiceEngine').value === 'voicestudio' && !F('cloneConsent').checked) {
+      switchTab('voice');
+      return sys('To use a cloned voice, tick the box confirming it\'s your voice or you have the person\'s permission.');
+    }
     if (F('remoteEnabled').checked && !F('remotePasscode').value.trim() && !state.settings.remote.hasPasscode) {
       switchTab('access');
       F('remotePasscode').focus();
@@ -1394,6 +1403,7 @@
       voice: {
         engine: F('voiceEngine').value, piperVoice: F('piperVoice').value || 'alan', systemVoice: F('systemVoice').value, rate: Number(F('rate').value), pitch: Number(F('pitch').value),
         openaiVoice: F('openaiVoice').value, elevenVoiceId: F('elevenVoiceId').value.trim(),
+        vsUrl: F('vsUrl').value.trim() || 'http://127.0.0.1:3900', vsVoice: $('#vs-voice').value, cloneConsent: F('cloneConsent').checked,
       },
       sttEngine: F('sttEngine').value,
       sttLanguage: F('sttLanguage').value,
@@ -1439,6 +1449,7 @@
     const preview = {
       engine: F('voiceEngine').value, piperVoice: F('piperVoice').value, openaiVoice: F('openaiVoice').value,
       elevenVoiceId: F('elevenVoiceId').value.trim(), rate: Number(F('rate').value),
+      vsUrl: F('vsUrl').value.trim() || 'http://127.0.0.1:3900', vsVoice: $('#vs-voice').value, cloneConsent: F('cloneConsent').checked,
     };
     state.settings.voice = { ...prev, ...preview, systemVoice: F('systemVoice').value, pitch: F('pitch').value };
     const wasMuted = state.muted;
@@ -1698,6 +1709,23 @@
       $('#ollama-status').textContent = 'Downloading the AI (about 5 GB)… you can keep using Jarvis meanwhile.';
     } else if (r.error) $('#ollama-status').textContent = r.error;
   };
+
+  // ---- cloned voices from VoiceStudio
+  async function fillVsVoices() {
+    const sel = $('#vs-voice'), status = $('#vs-status');
+    const want = sel.value || state.settings?.voice?.vsVoice || '';
+    status.textContent = 'Looking for VoiceStudio…';
+    const u = F('vsUrl').value.trim();
+    const r = await api('/voicestudio/voices' + (u ? '?url=' + encodeURIComponent(u) : '')).catch(e => ({ error: e.message }));
+    if (r.error) { status.textContent = r.error; status.className = 'hint bad'; return; }
+    sel.innerHTML = r.voices.length ? r.voices.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('') : '<option value="">(no voices yet: clone one in VoiceStudio)</option>';
+    if (want && r.voices.some(v => v.id === want)) sel.value = want;
+    status.textContent = r.voices.length ? `✓ VoiceStudio connected: ${r.voices.length} voice${r.voices.length > 1 ? 's' : ''}.` : 'VoiceStudio is running, but has no cloned voices yet.';
+    status.className = 'hint ' + (r.voices.length ? 'good' : '');
+  }
+  $('#vs-refresh').onclick = fillVsVoices;
+  $('#vs-download').onclick = () => openLink('https://voicestudio.sh');
+  F('voiceEngine').addEventListener('change', () => { if (F('voiceEngine').value === 'voicestudio') fillVsVoices(); });
 
   async function fillPiperVoices() {
     const sel = F('piperVoice');

@@ -354,6 +354,12 @@ async function startServer({ store, port, host, notify }) {
         brain.rebuild();
         return send(res, 200, { ok: true, folders: brain.sourceFolders() });
       case 'GET /api/voices': return send(res, 200, { piper: piper.supported ? piper.voices() : [] });
+      case 'GET /api/voicestudio/voices': {
+        if (ownerOnly()) return;
+        const v = { ...store.get().voice };
+        if (url.searchParams.get('url')) v.vsUrl = url.searchParams.get('url');
+        try { return send(res, 200, { voices: await voice.voiceStudioVoices(v) }); } catch (e) { return send(res, 200, { error: e.message }); }
+      }
       case 'GET /api/stt-model': {
         // Which offline speech model the app should use for commands (downloads it if needed).
         const lang = store.get().sttLanguage;

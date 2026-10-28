@@ -303,10 +303,25 @@
         <select name="voiceEngine">
           <option value="piper">British AI voice (free, offline)</option>
           <option value="openai">OpenAI voice (British butler, needs OpenAI key)</option>
+          <option value="voicestudio">My cloned voice (VoiceStudio, free &amp; local)</option>
           <option value="elevenlabs">ElevenLabs (design your own voice)</option>
           <option value="system">Computer's built-in voice (free, basic)</option>
         </select>
       </label>
+      <div class="only-voicestudio vs-box">
+        <p><b>Jarvis can talk in a cloned voice</b>: yours, or a friend's or family member's <b>with their permission</b>. It's made with <b>VoiceStudio</b>, a free app that runs on your computer, so nothing goes online.</p>
+        <ol class="steps">
+          <li><button type="button" class="primary big" id="vs-download">1. Get VoiceStudio (free) ↗</button><br><span class="hint">Install it and open it. It downloads its voice model the first time (it asks first).</span></li>
+          <li><b>2.</b> In VoiceStudio open <b>Voice cloning</b>, add a <b>clean 10–30 second recording</b> (quiet room, normal talking), and save the voice with a name.</li>
+          <li><b>3.</b> Pick it here (VoiceStudio must be open):
+            <div class="row paste-row"><select id="vs-voice" name="vsVoice"><option value="">(press Refresh)</option></select><button type="button" id="vs-refresh">Refresh</button></div>
+            <span class="hint" id="vs-status"></span>
+          </li>
+          <li><label class="check"><input type="checkbox" name="cloneConsent"> This is my own voice, or the person gave me permission to use it. (No celebrities or anyone who hasn't agreed.)</label></li>
+        </ol>
+        <details class="advanced"><summary>Advanced</summary><label>VoiceStudio address <input name="vsUrl" spellcheck="false" placeholder="http://127.0.0.1:3900"></label></details>
+        <p class="hint">If VoiceStudio is closed, Jarvis keeps talking in his British voice. Cloning works best with a computer that has a graphics card; on others it's slower.</p>
+      </div>
       <label class="only-piper">Which voice <select name="piperVoice"></select></label>
       <p class="hint only-piper">Each voice downloads once, then works offline. Try a few with "Test voice". "Charles" and "Henry" are the closest to a refined AI butler; "Norman" and "John" sound like older gentlemen. Voices that copy real actors aren't included.</p>
       <p class="hint only-elevenlabs">Closest match: in ElevenLabs open <b>Voices → Add voice → Voice Design</b> and describe it, e.g. "Refined, calm, middle-aged British male AI butler, RP accent, crisp and precise, dry understated wit, slightly digital polish." Save it, then paste its Voice ID below. For an older butler try "elderly, warm, slightly gravelly London gentleman butler, unhurried and kind". Describe a style, don't copy a real actor.</p>
