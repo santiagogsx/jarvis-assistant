@@ -167,6 +167,33 @@ async function startServer({ store, port, host, notify }) {
         if (out.remote.enabled !== before) setTimeout(rebind, 200);
         return;
       }
+      case 'GET /api/email/detect':
+        if (ownerOnly()) return;
+        try { return send(res, 200, await email.detect(url.searchParams.get('address'))); } catch (e) { return send(res, 200, { error: e.message }); }
+      case 'POST /api/email/connect': {
+        // Easy email setup: test the app password, then save everything at once.
+        if (ownerOnly()) return;
+        const b = await json();
+        let d;
+        try { d = await email.detect(b.email); } catch (e) { return send(res, 200, { ok: false, error: e.message }); }
+        if (d.guide?.oauthOnly) return send(res, 200, { ok: false, error: d.guide.note });
+        const servers = b.servers?.imapHost ? b.servers : d; // "Advanced" overrides
+        const password = String(b.password || '').trim().replace(d.preset === 'gmail' ? /\s+/g : /^$/, '');
+        if (!password) return send(res, 200, { ok: false, error: 'Paste the app password first.' });
+        try {
+          const t = await email.testLogin({ email: d.email, password, ...servers });
+          store.update({
+            email: { preset: b.servers?.imapHost ? 'custom' : d.preset, user: d.email, imapHost: servers.imapHost, imapPort: Number(servers.imapPort) || 993, smtpHost: servers.smtpHost, smtpPort: Number(servers.smtpPort) || 465 },
+            keys: { email: password },
+          });
+          return send(res, 200, { ok: true, canSend: t.canSend, email: d.email });
+        } catch (e) { return send(res, 200, { ok: false, error: e.message }); }
+      }
+      case 'POST /api/email/disconnect':
+        if (ownerOnly()) return;
+        store.setSecret('email', '');
+        store.update({ email: { user: '' } });
+        return send(res, 200, { ok: true });
       case 'POST /api/keys/test': {
         // "Make it fast": check a pasted free key really works, then save it.
         if (ownerOnly()) return;

@@ -315,6 +315,40 @@
     </section>
 
     <section class="tab" data-tab="email" hidden>
+      <!-- Connected -->
+      <div class="update-box" id="mail-connected" hidden>
+        <div class="update-status good" id="mail-connected-text">✓ Connected</div>
+        <div class="row"><button type="button" id="mail-change">Use a different email</button><button type="button" id="mail-disconnect">Disconnect</button></div>
+      </div>
+
+      <!-- Guided setup -->
+      <div id="mail-setup">
+        <ol class="steps">
+          <li><b>1. Your email address</b>
+            <div class="row paste-row">
+              <input id="mail-address" type="email" autocomplete="email" spellcheck="false" placeholder="name@gmail.com">
+              <button type="button" class="primary" id="mail-next">Next</button>
+            </div>
+            <span class="hint" id="mail-detected"></span>
+          </li>
+          <li id="mail-step2" hidden><b>2. Make a password just for Jarvis</b>
+            <p class="hint" id="mail-why">Your email provider doesn't let any app use your normal password, so you make a special "app password" for Jarvis. It takes a minute, and you can delete it any time.</p>
+            <div id="mail-before" hidden><p class="hint" id="mail-before-text"></p><button type="button" id="mail-before-btn"></button></div>
+            <button type="button" class="primary big" id="mail-open"></button>
+            <ol class="mini-steps" id="mail-steps"></ol>
+          </li>
+          <li id="mail-step3" hidden><b>3. Paste it and connect</b>
+            <div class="row paste-row">
+              <input id="mail-pass" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the app password here">
+              <button type="button" class="primary" id="mail-connect">Connect &amp; test</button>
+            </div>
+            <span class="hint" id="mail-result"></span>
+          </li>
+        </ol>
+      </div>
+      <p class="hint">You sign in on your email provider's own page, so Jarvis never sees your real password. Jarvis reads email to answer you and only sends after you tap <b>Send</b>.</p>
+
+      <details class="advanced"><summary>Advanced: server settings</summary>
       <label>Email service
         <select name="emailPreset">
           <option value="gmail">Gmail</option>
@@ -334,7 +368,7 @@
         <label>SMTP server <input name="smtpHost" spellcheck="false"></label>
         <label>SMTP port <input name="smtpPort" type="number"></label>
       </div>
-      <p class="hint">Use an <b>app password</b>, not your normal password. Gmail: myaccount.google.com/apppasswords (needs 2-step verification). Yahoo/AOL: Account security → Generate app password. iCloud: appleid.apple.com → App-Specific Passwords. Jarvis reads email to answer you, and only sends after you tap Send.</p>
+      </details>
     </section>
 
     <section class="tab" data-tab="music" hidden>

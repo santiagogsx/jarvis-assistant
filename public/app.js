@@ -1075,6 +1075,7 @@
     F('browser').value = s.browser || 'auto';
     F('ollamaUrl').value = s.ollamaUrl || '';
     refreshFast();
+    refreshMail();
     F('assistantName').value = s.assistantName || 'Jarvis';
     F('userName').value = s.userName || '';
     F('namePronounce').value = s.namePronounce || '';
@@ -1333,6 +1334,68 @@
     state.muted = wasMuted;
     state.settings.voice = prev;
   };
+
+  // ---- Email: guided setup (address -> provider's app-password page -> paste & test)
+  const openLink = url => { if (desk) desk.openExternal(url); else window.open(url, '_blank', 'noopener'); };
+  function refreshMail() {
+    const s = state.settings || {};
+    const connected = !!(s.email?.user && s.hasKey?.email);
+    $('#mail-connected').hidden = !connected;
+    $('#mail-setup').hidden = connected;
+    if (connected) $('#mail-connected-text').textContent = `✓ Connected: ${s.email.user}. Ask "any new emails?"`;
+  }
+  let mailInfo = null;
+  async function mailNext() {
+    const address = $('#mail-address').value.trim();
+    const out = $('#mail-detected');
+    out.className = 'hint';
+    out.textContent = 'Looking up your email provider…';
+    $('#mail-step2').hidden = $('#mail-step3').hidden = true;
+    const d = await api('/email/detect?address=' + encodeURIComponent(address)).catch(e => ({ error: e.message }));
+    if (d.error) { out.textContent = d.error; out.className = 'hint bad'; return; }
+    mailInfo = d;
+    const g = d.guide || {};
+    if (g.oauthOnly) { out.textContent = g.note; out.className = 'hint bad'; return; }
+    out.textContent = `✓ ${g.name} found.`;
+    out.className = 'hint good';
+    $('#mail-before').hidden = !g.before;
+    if (g.before) {
+      $('#mail-before-text').textContent = g.before.text;
+      $('#mail-before-btn').textContent = g.before.button + ' ↗';
+      $('#mail-before-btn').onclick = () => openLink(g.before.url);
+    }
+    $('#mail-open').hidden = !g.url;
+    $('#mail-open').textContent = (g.button || 'Open') + ' ↗';
+    $('#mail-open').onclick = () => openLink(g.url);
+    $('#mail-why').hidden = d.preset === 'custom';
+    $('#mail-steps').innerHTML = (g.steps || []).map(x => `<li>${esc(x)}</li>`).join('');
+    $('#mail-step2').hidden = false;
+    $('#mail-step3').hidden = false;
+    $('#mail-pass').placeholder = d.preset === 'custom' ? 'Your email password' : 'Paste the app password here';
+  }
+  $('#mail-next').onclick = mailNext;
+  $('#mail-address').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); mailNext(); } });
+  $('#mail-connect').onclick = async () => {
+    const out = $('#mail-result');
+    if (!mailInfo) return mailNext();
+    out.className = 'hint';
+    out.textContent = 'Signing in to check it works…';
+    const r = await api('/email/connect', { method: 'POST', body: { email: mailInfo.email, password: $('#mail-pass').value } }).catch(e => ({ error: e.message }));
+    if (!r.ok) { out.textContent = r.error; out.className = 'hint bad'; return; }
+    $('#mail-pass').value = '';
+    out.textContent = r.canSend ? '✓ Connected! Jarvis can read and send email.' : '✓ Connected for reading. (Sending didn\'t check out; replies may not send.)';
+    out.className = 'hint good';
+    await loadSettings();
+    refreshMail();
+    sys(`✉️ Email connected (${r.email}). Try "any new emails?"`);
+  };
+  $('#mail-change').onclick = () => { $('#mail-connected').hidden = true; $('#mail-setup').hidden = false; $('#mail-address').focus(); };
+  $('#mail-disconnect').onclick = async () => {
+    await api('/email/disconnect', { method: 'POST' });
+    await loadSettings();
+    refreshMail();
+  };
+  $('#mail-pass').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#mail-connect').click(); } });
 
   // ---- "Make it fast (free)": guided free Groq key
   const hasFastAI = () => ['groq', 'cerebras', 'gemini', 'mistral', 'openrouter'].some(k => state.settings?.hasKey?.[k]);

@@ -484,6 +484,16 @@ button.big { font-size: 17px; padding: 12px 18px !important; }
 #groq-result.good { color: #7dffb2; }
 #groq-result.bad { color: #ffb4aa; }
 
+/* Settings → Email guided setup */
+.mini-steps { margin: 10px 0 0; padding-left: 22px; display: grid; gap: 4px; font-size: 15px; }
+#mail-step2 .big { margin-top: 6px; }
+#mail-before { margin-bottom: 8px; }
+.advanced { border-top: 1px dashed var(--cyan-faint); padding-top: 8px; }
+.advanced summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.advanced[open] { display: grid; gap: 10px; }
+#mail-result.good, #mail-detected.good { color: #7dffb2; }
+#mail-result.bad, #mail-detected.bad { color: #ffb4aa; }
+
 /* Settings → Updates */
 .update-box { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--cyan-faint); background: rgba(95, 227, 255, .04); }
 .update-version { font-size: 17px; }
