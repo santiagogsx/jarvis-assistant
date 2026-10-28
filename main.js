@@ -238,6 +238,29 @@ app.whenReady().then(async () => {
 
 ipcMain.on('win:minimize', () => { if (trayPrefs().keep) hideToTray(); else win?.minimize(); });
 ipcMain.handle('tray:get', () => trayPrefs());
+// Eyes: screenshot of the monitor the mouse is on (Jarvis hides for a moment so he isn't in it).
+ipcMain.handle('capture-screen', async () => {
+  const { desktopCapturer } = require('electron');
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const wasVisible = win?.isVisible();
+  if (wasVisible) win.setOpacity(0);
+  for (const w of satellites) if (!w.isDestroyed()) w.setOpacity(0);
+  await new Promise(r => setTimeout(r, 250));
+  try {
+    const scale = Math.min(1, 1600 / display.size.width);
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(display.size.width * scale), height: Math.round(display.size.height * scale) } });
+    const src = sources.find(s => String(s.display_id) === String(display.id)) || sources[0];
+    return src ? 'data:image/jpeg;base64,' + src.thumbnail.toJPEG(80).toString('base64') : null;
+  } finally {
+    if (wasVisible) win.setOpacity(1);
+    for (const w of satellites) if (!w.isDestroyed()) w.setOpacity(1);
+  }
+});
+ipcMain.handle('pick-folder', async () => {
+  const { dialog } = require('electron');
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Choose a folder for the Second Brain' });
+  return r.canceled ? null : r.filePaths[0];
+});
 ipcMain.handle('tray:set', (_e, keep) => { fs.writeFileSync(trayFile(), JSON.stringify({ keep: !!keep })); return trayPrefs(); });
 ipcMain.on('win:maximize', () => { if (!win) return; win.isMaximized() ? win.unmaximize() : win.maximize(); });
 ipcMain.on('win:close', () => win?.close());

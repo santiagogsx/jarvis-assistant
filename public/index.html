@@ -41,6 +41,14 @@
   <div class="title-actions">
     <button class="update-btn" id="update-btn" hidden></button>
     <span class="wake-badge" id="wake-badge" title="Say &quot;Hey Jarvis&quot;" hidden>● HEY JARVIS</span>
+    <button class="icon-btn" id="brain-btn" title="Second Brain map" aria-label="Open Second Brain">🧠</button>
+    <div class="eyes-wrap">
+      <button class="icon-btn" id="eyes-btn" title="Eyes: let Jarvis look" aria-label="Eyes">👁</button>
+      <div class="eyes-menu" id="eyes-menu" hidden>
+        <button type="button" data-look="screen">🖥 Look at my screen</button>
+        <button type="button" data-look="camera">📷 Look through the camera</button>
+      </div>
+    </div>
     <button class="icon-btn mic-switch" id="micoff-btn" title="Turn microphone off" aria-label="Turn microphone off" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/><path class="slash" d="M4 3 21 20" stroke-width="2.4" stroke-linecap="round"/></svg>
     </button>
@@ -89,6 +97,11 @@
       <canvas id="orb" aria-hidden="true"></canvas>
       <div id="caption" class="caption"></div>
       <div id="status-text">ONLINE</div>
+    </div>
+
+    <div class="ai-chip-row">
+      <button type="button" id="ai-chip" class="ai-chip" title="Which AI brain answers: click to switch">● FREE AI ▾</button>
+      <div id="ai-menu" class="ai-menu" hidden></div>
     </div>
 
     <div id="log" class="log" aria-live="polite"></div>
@@ -147,6 +160,26 @@
   </aside>
 </main>
 
+<!-- Second Brain map -->
+<div id="brain" class="brain" aria-label="Second Brain">
+  <aside class="brain-side">
+    <div class="brain-head"><b>SECOND BRAIN</b><span id="brain-stats" class="muted"></span></div>
+    <input id="brain-search" placeholder="Search the brain…" autocomplete="off" spellcheck="false">
+    <h4>Inspector</h4>
+    <div id="brain-inspector" class="brain-inspector"></div>
+    <h4>Top hubs</h4>
+    <ul id="brain-hubs" class="brain-hubs"></ul>
+    <h4>Filter</h4>
+    <div id="brain-filters" class="brain-filters"></div>
+    <h4>Forces</h4>
+    <label class="brain-slider">Spread <input id="brain-repel" type="range" min="200" max="3000" value="900"></label>
+    <label class="brain-slider">Link length <input id="brain-link" type="range" min="20" max="200" value="60"></label>
+    <div class="row"><button type="button" id="brain-fit">Fit to screen</button><button type="button" id="brain-refresh">Re-read files</button></div>
+  </aside>
+  <canvas id="brain-canvas"></canvas>
+  <button type="button" class="icon-btn brain-close" id="brain-close" aria-label="Close Second Brain">✕</button>
+</div>
+
 <!-- Passcode screen for phones / other devices -->
 <div id="lock" class="lock" hidden>
   <form id="lock-form" class="lock-box">
@@ -169,9 +202,11 @@
       <button type="button" data-tab="ai" class="active"><span>🧠</span>AI brain</button>
       <button type="button" data-tab="you"><span>👤</span>You &amp; name</button>
       <button type="button" data-tab="voice"><span>🔊</span>Voice</button>
+      <button type="button" data-tab="brainset"><span>🧠</span>Second Brain</button>
       <button type="button" data-tab="device"><span>💻</span>This device</button>
       <button type="button" data-tab="keys"><span>🔑</span>API keys</button>
       <button type="button" data-tab="email"><span>✉️</span>Email</button>
+      <button type="button" data-tab="calendar"><span>📅</span>Calendar</button>
       <button type="button" data-tab="music"><span>🎵</span>Music</button>
       <button type="button" data-tab="phone"><span>📞</span>Texts &amp; calls</button>
       <button type="button" data-tab="trading"><span>📈</span>Trading</button>
@@ -415,6 +450,41 @@
       <label class="check danger-check"><input type="checkbox" name="liveConfirmed"> I understand "Live" uses my real money and I'm responsible for every order I confirm.</label>
     </section>
 
+    <section class="tab" data-tab="calendar" hidden>
+      <div class="fast-status" id="cal-status">Not connected yet.</div>
+      <p>Connect your calendar so Jarvis can tell you what's coming up ("Monday's got three items, sir") and include it in your morning briefing. You copy your calendar's <b>private link</b> once. No password needed.</p>
+      <div class="row cal-kinds">
+        <button type="button" data-kind="google" class="primary">Google Calendar</button>
+        <button type="button" data-kind="apple">Apple iCloud</button>
+        <button type="button" data-kind="outlook">Outlook / Hotmail</button>
+      </div>
+      <ol class="steps" id="cal-steps" hidden>
+        <li><button type="button" class="primary big" id="cal-open"></button></li>
+        <li id="cal-how"></li>
+        <li><b>Paste the link here:</b>
+          <div class="row paste-row">
+            <input id="cal-link" type="password" autocomplete="off" spellcheck="false" placeholder="https://… or webcal://…">
+            <button type="button" class="primary" id="cal-connect">Connect &amp; test</button>
+          </div>
+          <span class="hint" id="cal-result"></span>
+        </li>
+      </ol>
+      <p class="hint">Keep this link private: it lets anyone who has it see your calendar. It's saved encrypted on this computer. To add events, Jarvis opens them filled in and you tap Save. You can connect more than one calendar.</p>
+      <button type="button" id="cal-disconnect" hidden>Disconnect all calendars</button>
+    </section>
+
+    <section class="tab" data-tab="brainset" hidden>
+      <p>Your <b>Second Brain</b> is everything Jarvis knows about you: things you tell him to remember, your notes, and the folders below. He searches it to answer questions about your life, business and projects, and the 🧠 button shows it as a map. Everything stays on this computer.</p>
+      <ul class="folder-list" id="brain-folders"></ul>
+      <div class="row paste-row">
+        <input id="brain-folder-input" placeholder="Folder path, e.g. C:\Users\you\Documents\Notes" spellcheck="false">
+        <button type="button" id="brain-folder-pick">Choose folder…</button>
+        <button type="button" class="primary" id="brain-folder-add">Add</button>
+      </div>
+      <p class="hint">Good folders to add: your notes, school or work documents, an Obsidian vault. Jarvis reads text files (.md, .txt, .csv, .json, .html). Your saved facts go into <b>Documents\Jarvis\Brain</b> as normal note files.</p>
+      <button type="button" id="brain-open-map">🧠 Open the map</button>
+    </section>
+
     <section class="tab" data-tab="updates" hidden>
       <div class="update-box">
         <div class="update-version">Installed version: <b id="upd-current">—</b></div>
@@ -486,6 +556,7 @@
 
 <script src="fx.js"></script>
 <script src="wake.js"></script>
+<script src="brain-map.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

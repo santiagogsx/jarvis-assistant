@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 // 'email' is the mailbox (app) password; 'spotifyRefresh' is set by the Spotify login, never typed.
-const KEY_FIELDS = ['openai', 'anthropic', 'grok', 'gemini', 'openrouter', 'custom', 'groq', 'elevenlabs', 'mistral', 'cerebras', 'tavily', 'brave', 'email', 'twilio', 'alpacaKey', 'alpacaSecret', 'oandaToken', 'spotifyRefresh'];
+const KEY_FIELDS = ['openai', 'anthropic', 'grok', 'gemini', 'openrouter', 'custom', 'groq', 'elevenlabs', 'mistral', 'cerebras', 'tavily', 'brave', 'email', 'twilio', 'alpacaKey', 'alpacaSecret', 'oandaToken', 'calendar', 'spotifyRefresh'];
 
 const ENV_KEYS = {
   openai: 'OPENAI_API_KEY',
@@ -40,6 +40,9 @@ const DEFAULTS = {
   customBaseUrl: '',
   ollamaUrl: 'http://localhost:11434/v1',
   assistantName: 'Jarvis',
+  brain: { folders: [] },
+  calendar: { kind: 'google' },  // where new events are saved: google | apple | outlook // extra folders the Second Brain reads (e.g. an Obsidian vault)
+  aiMode: 'normal',       // 'local' = only the AI running on this computer (Ollama), nothing leaves it
   browser: 'auto',       // live-research browser: auto | chrome | msedge | brave
   userName: '',
   namePronounce: '',

@@ -9,6 +9,7 @@ const os = require('os');
 const research = require('./research');
 const email = require('./email');
 const phone = require('./phone');
+const calendar = require('./calendar');
 
 const enc = encodeURIComponent;
 
@@ -61,12 +62,25 @@ const str = description => ({ type: 'string', description });
 const num = description => ({ type: 'number', description });
 
 const DEFS = [
+  fn('search_brain', "Search the person's Second Brain: their own notes, documents, saved facts, tasks and chosen folders. Use it FIRST for anything about their life, business, projects, people they know, plans or files.", { query: str('What to look for') }, ['query']),
+  fn('remember', 'Save something to the Second Brain for later (a fact, idea, plan or info about the person). Use when they say "remember", "note that", "save this".', {
+    title: str('Short title'), text: str('What to remember, written clearly'), tags: { type: 'array', items: { type: 'string' }, description: 'Optional topics' },
+  }, ['title', 'text']),
+  fn('calendar_events', "The person's calendar: what's scheduled today, tomorrow, this week, or on a date.", {
+    range: { type: 'string', enum: ['today', 'tomorrow', 'this_week', 'next_7_days', 'next_30_days'], description: 'Default today' },
+    date: str('Or a specific date YYYY-MM-DD'),
+  }),
+  fn('add_calendar_event', 'Prepare a new calendar event; it opens filled in and the person taps Save.', {
+    title: str('Event name'), start: str('Start, local time ISO like 2026-10-30T18:00'), end: str('Optional end, same format'),
+    details: str('Optional notes'), location: str('Optional place'),
+  }, ['title', 'start']),
   fn('get_datetime', 'Current local date, time and day of week.'),
   fn('get_weather', 'Current weather and 3-day forecast. Uses the home city if no location is given.', { location: str('City, e.g. "Austin, Texas" or "London"') }),
   fn('web_search', 'Search the internet. Use for research, current events, prices, scores, facts you are unsure of. Then use read_webpage on the best results.', { query: str('Search query'), max_results: num('1-10, default 6') }, ['query']),
   fn('read_webpage', 'Fetch a web page and return its readable text, to research a topic in depth.', { url: str('Full http(s) URL') }, ['url']),
   fn('get_news', 'Latest news headlines, optionally about a topic.', { topic: str('Optional topic, e.g. "AI", "Lakers", "stock market"') }),
-  fn('open_website', "Open a web page on the person's device.", { url: str('Full URL'), label: str('Short name for the button') }, ['url']),
+  fn('analyze_website', 'Reverse-engineer a website: which frameworks, 3D/animation libraries, hosting, fonts and colours it uses. Then explain in plain words how it was built and how its effects likely work.', { url: str('Website address') }, ['url']),
+  fn('open_website',"Open a web page on the person's device.", { url: str('Full URL'), label: str('Short name for the button') }, ['url']),
   fn('open_social', "Open a social media site on the person's device.", { platform: str('x, instagram, facebook, tiktok, youtube, linkedin, reddit, threads, bluesky, whatsapp, telegram, discord, snapchat, pinterest, twitch') }, ['platform']),
   fn('draft_social_post', 'Write a social media post and open it pre-filled so the person can review and press Post themselves. Also copies the text.', { platform: str('Platform name'), text: str('Post text') }, ['platform', 'text']),
   fn('check_email', "List recent emails from the person's inbox (unread by default).", { unread_only: { type: 'boolean' }, limit: num('Max emails, default 10'), folder: str('Mailbox folder, default INBOX') }),
@@ -153,7 +167,7 @@ const DEFS = [
 
 // Which tools a request needs, guessed from the recent messages. Fewer tools =
 // a much smaller request = faster (and more accurate) answers, especially on free AIs.
-const CORE_TOOLS = ['get_datetime', 'get_weather', 'web_search', 'read_webpage', 'get_news', 'open_website', 'save_note', 'get_notes',
+const CORE_TOOLS = ['search_brain', 'remember', 'get_datetime', 'get_weather', 'web_search', 'read_webpage', 'get_news', 'open_website', 'save_note', 'get_notes',
   'set_reminder', 'list_reminders', 'add_task', 'list_tasks', 'complete_task', 'copy_to_clipboard'];
 const TOOL_GROUPS = [
   [/e-?mail|inbox|gmail|outlook|yahoo mail|unread|reply|draft|message from/i, ['check_email', 'search_email', 'read_email', 'draft_email']],
@@ -162,8 +176,11 @@ const TOOL_GROUPS = [
   [/buy|order|shop|amazon|ebay|walmart|target|best ?buy|cheap|deal|product|cart|purchase/i, ['find_products', 'prepare_order']],
   [/stock|shares?\b|crypto|bitcoin|btc|eth|forex|trade|trading|alpaca|oanda|portfolio|position|ticker|eur\/?usd|market/i, ['trading_account', 'market_quote', 'prepare_trade']],
   [/text me|call me|sms|phone|wake me|wake-?up/i, ['text_me', 'call_me']],
+  [/calendar|schedule|meeting|appointment|event|agenda|busy|free (on|at|this|tomorrow)|briefing|good morning|today|tomorrow|this week|plans/i, ['calendar_events', 'add_calendar_event']],
   [/browser|show me|on (my|the) (computer|screen|pc)|chrome|edge|brave|watch|navigate|click|scroll|go back|look (it )?up on/i, ['browser_search', 'browser_open', 'browser_click', 'browser_type', 'browser_scroll', 'browser_back', 'browser_read', 'browser_close']],
   [/website|web ?site|landing page|web ?page|homepage|html|css/i, ['build_website', 'read_website_file', 'list_websites', 'browser_open']],
+  [/how (was|is) .* (made|built)|reverse.?engineer|tech ?stack|what .* (built|made) with|analy[sz]e .*(site|\.com|\.io|\.inc)|which framework|what library/i, ['analyze_website']],
+  [/https?:\/\/|\b[a-z0-9-]+\.(com|io|inc|net|org|dev|app|co|ai)\b/i, ['analyze_website', 'read_webpage']],
   [/folder|file|download|move|copy|desktop|documents|downloads|pictures|videos|save (it|this|that)/i, ['make_folder', 'download_file', 'move_file', 'copy_file', 'list_folder', 'open_folder', 'create_file', 'list_files']],
   [/open |launch|start (the )?app|calculator|notepad|settings app/i, ['open_app']],
   [/every (day|morning|night|evening|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|routine|schedule|each (morning|day|night)|daily|weekly|weekdays?/i, ['schedule_routine', 'list_routines', 'delete_routine']],
@@ -178,7 +195,7 @@ function pickTools(history) {
   return DEFS.filter(d => names.has(d.name));
 }
 
-function createTools({ dataDir, music, browser, trading, sitesUrl, broadcast, notify, getSettings, runRoutine }) {
+function createTools({ dataDir, music, browser, trading, brain, sitesUrl, broadcast, notify, getSettings, runRoutine }) {
   const file = name => path.join(dataDir, name);
   const readJSON = (name, fallback) => { try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch { return fallback; } };
   const writeJSON = (name, data) => { fs.mkdirSync(dataDir, { recursive: true }); fs.writeFileSync(file(name), JSON.stringify(data, null, 2)); };
@@ -378,6 +395,30 @@ function createTools({ dataDir, music, browser, trading, sitesUrl, broadcast, no
     try {
       let result;
       switch (name) {
+        case 'analyze_website': result = await research.analyzeWebsite(args.url); break;
+        case 'calendar_events': result = await calendar.events(s, args); break;
+        case 'add_calendar_event': {
+          const ev = calendar.newEvent(s, args);
+          if (ev.open_url) { act({ type: 'open', url: ev.open_url, label: 'Save event in Google Calendar' }); }
+          else if (ctx.local) {
+            // Open the .ics file: Windows Calendar/Outlook or Mac Calendar adds it.
+            const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', `"${ev.file}"`]] : process.platform === 'darwin' ? ['open', [ev.file]] : ['xdg-open', [ev.file]];
+            execFile(opener[0], opener[1], { windowsVerbatimArguments: true, windowsHide: true }, () => {});
+          } else return { error: 'Adding events to this calendar works on the main computer.' };
+          result = { ok: true, status: 'Event opened, filled in. The person taps Save to add it.' };
+          break;
+        }
+        case 'search_brain': {
+          const hits = brain.search(args.query, 6);
+          result = hits.length ? { results: hits } : { results: [], note: 'Nothing about that in the Second Brain yet.' };
+          break;
+        }
+        case 'remember': {
+          const file = brain.remember(args.title, args.text, Array.isArray(args.tags) ? args.tags : []);
+          broadcast('brain', { changed: true });
+          result = { ok: true, saved_to: file };
+          break;
+        }
         case 'get_datetime': {
           const d = new Date();
           result = { date: d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), time: d.toLocaleTimeString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };

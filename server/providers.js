@@ -113,7 +113,20 @@ async function chatInner(opts) {
   opts = { ...opts, runTool: (name, args) => { checkCancelled(); return runTool(name, args); } };
   const msgs = cleanHistory(opts.history);
   if (!msgs.length) throw new Error('Nothing to answer.');
-  const run = (provider, model) => chatWith({ ...opts, provider, model, msgs });
+  // onUsed tells the app which AI actually answered (shown under the orb).
+  const run = async (provider, model) => {
+    const r = await chatWith({ ...opts, provider, model, msgs });
+    opts.onUsed?.(provider, model);
+    return r;
+  };
+
+  // 100% local: only the AI running on this computer; nothing leaves it.
+  if (settings.aiMode === 'local') {
+    if (!(await ollamaReady(settings))) {
+      throw Object.assign(new Error(`Local mode needs the free Ollama AI running on this computer with the "${settings.models.ollama || 'llama3.1'}" model. Set it up in Settings → AI brain ("Set up unlimited AI on this PC"), or switch back to Free AI with the chip under the orb.`), { noFallback: true });
+    }
+    return run('ollama', settings.models.ollama || 'llama3.1');
+  }
 
   if (settings.provider === 'free') {
     let lastErr;

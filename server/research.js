@@ -137,4 +137,106 @@ async function news(topic, country = 'US') {
   return { topic: topic || 'top stories', headlines: items };
 }
 
-module.exports = { webSearch, readWebpage, news, getJSON, stripTags, assertPublicUrl };
+// ---------------------------------------------------------------- website analyzer
+// "Reverse engineer" a site: which frameworks, 3D/animation libraries, hosting,
+// fonts and colours it uses, from its HTML, headers and script bundles.
+const TECH = [
+  ['Three.js (3D / WebGL)', /three(\.module)?(\.min)?\.js|THREE\.WebGLRenderer|WebGLRenderer|three@\d/i],
+  ['GSAP (animation)', /gsap|TweenMax|TweenLite|greensock/i],
+  ['GSAP ScrollTrigger', /ScrollTrigger/],
+  ['Lenis (smooth scrolling)', /lenis/i],
+  ['Locomotive Scroll', /locomotive-scroll/i],
+  ['Framer Motion', /framer-motion|motion\.div/i],
+  ['Lottie animations', /lottie|bodymovin/i],
+  ['Spline 3D', /spline(tool)?\.design|@splinetool/i],
+  ['Rive animations', /rive\.app|@rive-app/i],
+  ['PixiJS (2D WebGL)', /pixi(\.min)?\.js|PIXI\./],
+  ['Babylon.js (3D)', /babylon(js)?/i],
+  ['glTF 3D models (Draco/KTX2)', /DRACOLoader|KTX2Loader|\.glb\b|\.gltf\b/i],
+  ['Post-processing effects', /EffectComposer|postprocessing|UnrealBloom|BloomEffect/],
+  ['Custom shaders (GLSL)', /gl_FragColor|gl_Position|precision (highp|mediump) float/],
+  ['React', /react-dom|__REACT_DEVTOOLS|data-reactroot|_reactRootContainer/i],
+  ['Next.js', /\/_next\/|__NEXT_DATA__/],
+  ['Vue', /vue(\.runtime)?(\.global)?(\.min)?\.js|data-v-[0-9a-f]{6,}|__VUE__/i],
+  ['Nuxt', /\/_nuxt\/|__NUXT__/],
+  ['Svelte / SvelteKit', /svelte|__sveltekit/i],
+  ['Angular', /ng-version=|angular(\.min)?\.js/i],
+  ['Astro', /astro-island|astro\/client/i],
+  ['Gatsby', /___gatsby|gatsby-/i],
+  ['Remix', /__remixContext/],
+  ['jQuery', /jquery(\.min)?\.js|jQuery\.fn/i],
+  ['Tailwind CSS', /tailwind|--tw-[a-z]/i],
+  ['Bootstrap', /bootstrap(\.min)?\.(css|js)/i],
+  ['Swiper (sliders)', /swiper/i],
+  ['Barba.js (page transitions)', /barba/i],
+  ['Webflow', /webflow\.js|data-wf-page/i],
+  ['WordPress', /wp-content|wp-includes/i],
+  ['Shopify', /cdn\.shopify\.com|Shopify\.theme/i],
+  ['Wix', /wixstatic|_wixCssImports/i],
+  ['Squarespace', /squarespace/i],
+  ['Framer (site builder)', /framerusercontent|framer\.com\/m\//i],
+  ['Google Analytics', /gtag\(|google-analytics\.com|googletagmanager/i],
+  ['Stripe payments', /js\.stripe\.com/i],
+  ['Vimeo / YouTube video', /player\.vimeo|youtube\.com\/embed/i],
+];
+
+async function analyzeWebsite(raw) {
+  let url = await assertPublicUrl(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw);
+  const res = await fetch(url, { headers: { 'user-agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+  const html = (await res.text()).slice(0, 3_000_000);
+  const base = new URL(res.url || url);
+  const attr = (re) => [...html.matchAll(re)].map(m => { try { return new URL(m[1], base).href; } catch { return null; } }).filter(Boolean);
+  const scripts = [...new Set(attr(/<script[^>]+src=["']([^"']+)["']/gi))];
+  const styles = [...new Set(attr(/<link[^>]+rel=["']?stylesheet["']?[^>]*href=["']([^"']+)["']/gi))];
+  // Look inside the site's script bundles too (that's where the libraries hide),
+  // following files they load later (e.g. a separate "App3D" chunk), two levels deep.
+  const site = base.hostname.replace(/^www\./, '');
+  const isOurs = s => { try { const h = new URL(s).hostname; return h.endsWith(site) || /cdn|unpkg|jsdelivr|vercel|netlify|cloudfront/.test(h); } catch { return false; } };
+  const preload = attr(/<link[^>]+rel=["']?modulepreload["']?[^>]*href=["']([^"']+)["']/gi);
+  const inlineImports = [...html.matchAll(/import\(\s*["']([^"']+\.js)["']/g)].map(m => { try { return new URL(m[1], base).href; } catch { return null; } }).filter(Boolean);
+  let queue = [...new Set([...scripts, ...preload, ...inlineImports])].filter(isOurs).map(u => ({ u, depth: 0 }));
+  const seenJs = new Set();
+  const chunkNames = [];
+  let bundles = '', fetched = 0;
+  while (queue.length && fetched < 18 && bundles.length < 9_000_000) {
+    const { u, depth } = queue.shift();
+    if (seenJs.has(u)) continue;
+    seenJs.add(u);
+    try {
+      await assertPublicUrl(u);
+      const r = await fetch(u, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(12000) });
+      const js = (await r.text()).slice(0, 1_500_000);
+      fetched++;
+      bundles += '\n' + js;
+      chunkNames.push(u.split('/').pop().split('?')[0]);
+      if (depth < 2) {
+        for (const m of js.matchAll(/["'`]((?:\.{1,2}\/|\/)[^"'`\s]{1,160}?\.js)["'`]/g)) {
+          try { const next = new URL(m[1], u).href; if (isOurs(next) && !seenJs.has(next)) queue.push({ u: next, depth: depth + 1 }); } catch {}
+        }
+      }
+    } catch {}
+  }
+  let css = '';
+  for (const s of styles.slice(0, 4)) { try { await assertPublicUrl(s); css += (await (await fetch(s, { signal: AbortSignal.timeout(10000) })).text()).slice(0, 300_000); } catch {} }
+  const everything = html + bundles + scripts.join(' ');
+  const found = TECH.filter(([, re]) => re.test(everything)).map(([name]) => name);
+  const ver = (bundles.match(/REVISION\s*=\s*["'](\d+)/) || [])[1];
+  if (ver) found[found.findIndex(f => f.startsWith('Three.js'))] = `Three.js r${ver} (3D / WebGL)`;
+  const headers = Object.fromEntries(['server', 'x-powered-by', 'x-vercel-id', 'x-nf-request-id', 'cf-ray', 'x-github-request-id'].map(h => [h, res.headers.get(h)]).filter(([, v]) => v));
+  const hosting = headers['x-vercel-id'] ? 'Vercel' : headers['x-nf-request-id'] ? 'Netlify' : headers['cf-ray'] ? 'Cloudflare' : headers['x-github-request-id'] ? 'GitHub Pages' : headers.server || 'unknown';
+  const fonts = [...new Set([...(html + css).matchAll(/family=([A-Za-z+]+)/g)].map(m => m[1].replace(/\+/g, ' ')).concat([...css.matchAll(/font-family:\s*["']?([^;,"'}]+)/g)].map(m => m[1].trim())))].slice(0, 8);
+  const colors = Object.entries([...(html + css).matchAll(/#[0-9a-f]{6}\b/gi)].reduce((a, m) => { const c = m[0].toLowerCase(); a[c] = (a[c] || 0) + 1; return a; }, {}))
+    .sort((a, b) => b[1] - a[1]).slice(0, 8).map(([c]) => c);
+  const { title, text } = htmlToText(html);
+  return {
+    url: base.href, title, hosting, technology: found, headers,
+    description: stripTags((html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i) || [])[1] || ''),
+    uses_webgl: /getContext\(["']webgl2?["']\)|WebGLRenderer/.test(everything),
+    canvas_elements: (html.match(/<canvas/gi) || []).length,
+    fonts, colors, script_count: scripts.length, code_files_checked: chunkNames.slice(0, 18),
+    headings: [...html.matchAll(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi)].map(m => stripTags(m[1])).filter(Boolean).slice(0, 12),
+    visible_text_sample: text.slice(0, 1200),
+  };
+}
+
+module.exports = { webSearch, readWebpage, news, getJSON, stripTags, assertPublicUrl, analyzeWebsite };

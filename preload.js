@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('jarvisDesktop', {
   openUpdatePage: () => ipcRenderer.send('update:page'),
   version: () => ipcRenderer.invoke('app:version'),
   getTray: () => ipcRenderer.invoke('tray:get'),
+  pickFolder: () => ipcRenderer.invoke('pick-folder'),
+  captureScreen: () => ipcRenderer.invoke('capture-screen'),
   setTray: keep => ipcRenderer.invoke('tray:set', keep),
   getAutoStart: () => ipcRenderer.invoke('autostart:get'),
   setAutoStart: on => ipcRenderer.invoke('autostart:set', on),

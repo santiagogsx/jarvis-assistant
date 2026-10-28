@@ -118,6 +118,8 @@
     set_reminder: 'Setting reminder', save_note: 'Saving note', get_notes: 'Reading notes', draft_social_post: 'Drafting post',
     open_website: 'Opening link', open_social: 'Opening social', open_app: 'Opening app', text_me: 'Sending text', call_me: 'Placing call',
     system_status: 'Running diagnostics', get_datetime: 'Checking the time',
+    calendar_events: 'Checking your calendar', add_calendar_event: 'Preparing the event',
+    search_brain: 'Searching your Second Brain', remember: 'Saving to your Second Brain',
     add_task: 'Updating your list', list_tasks: 'Checking your list', complete_task: 'Ticking it off',
     browser_search: 'Live browser', browser_open: 'Live browser', browser_click: 'Live browser', browser_type: 'Live browser',
     browser_scroll: 'Live browser', browser_back: 'Live browser', browser_read: 'Live browser', browser_close: 'Closing browser',
@@ -249,11 +251,72 @@
   }
   $('#input-bar .send').addEventListener('click', () => { if (state.busy) cancelTask(); });
 
+  // ---- Eyes: Jarvis looks at the screen or through the camera when asked
+  const LOOK_SCREEN = /what('?s| is) on (my|the|this) screen|look at (my|the|this) screen|read (my|the|this) screen|(see|check) (my|the) screen|what am i looking at|help me with (this|my) screen/i;
+  const LOOK_CAMERA = /what do you see|can you see (me|this|it)|look at (me|this)|through (the|my) camera|what am i holding|how do i look|what('?s| is) in front of (you|me|the camera)/i;
+
+  async function snap(what) {
+    if (what === 'screen') {
+      if (!desk?.captureScreen) throw new Error('Looking at the screen works in the desktop app on the computer.');
+      const img = await desk.captureScreen();
+      if (!img) throw new Error("I couldn't capture the screen.");
+      return img;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('This device has no camera I can use here (phones need the https link).');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 } } }).catch(() => { throw new Error('I could not use the camera. Check that Jarvis is allowed to use it.'); });
+    try {
+      const v = document.createElement('video');
+      v.srcObject = stream; v.muted = true; v.playsInline = true;
+      await v.play();
+      await sleep(700); // let the camera adjust its exposure
+      const c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0);
+      return c.toDataURL('image/jpeg', 0.82);
+    } finally { stream.getTracks().forEach(t => t.stop()); }
+  }
+
+  async function lookAndAnswer(what, question) {
+    if (state.busy) cancelTask({ silent: true });
+    unlockAudio();
+    stopSpeaking();
+    const userEl = addMsg('user', question);
+    state.history.push({ role: 'user', content: question });
+    setBusy(true);
+    setMode('thinking');
+    addMsg('tool', what === 'screen' ? 'LOOKING AT YOUR SCREEN…' : 'LOOKING THROUGH THE CAMERA…');
+    let r;
+    try {
+      const image = await snap(what);
+      const img = document.createElement('img');
+      img.className = 'snap'; img.src = image; img.alt = what === 'screen' ? 'Screenshot' : 'Camera photo';
+      userEl.querySelector('.body').append(img);
+      r = await api('/vision', { method: 'POST', body: { image, question, what } });
+    } catch (e) { r = { error: e.message }; }
+    setBusy(false);
+    if (r.error) { state.history.pop(); sys(r.error); setMode('idle'); return; }
+    state.history.push({ role: 'assistant', content: `[I looked at the ${what}] ${r.answer}` });
+    const el = addMsg('jarvis', r.answer);
+    window.holo?.typeOut(el.querySelector('.body'), () => { log.scrollTop = log.scrollHeight; });
+    await speak(r.answer);
+  }
+  $('#eyes-btn').onclick = e => { e.stopPropagation(); $('#eyes-menu').hidden = !$('#eyes-menu').hidden; };
+  $('#eyes-menu').onclick = e => {
+    const b = e.target.closest('button[data-look]');
+    if (!b) return;
+    $('#eyes-menu').hidden = true;
+    lookAndAnswer(b.dataset.look, b.dataset.look === 'screen' ? "What's on my screen?" : 'What do you see?');
+  };
+  document.addEventListener('click', e => { if (!e.target.closest('.eyes-wrap')) $('#eyes-menu').hidden = true; });
+
   async function ask(text) {
     text = String(text || '').trim();
     if (!text) return;
     // "Stop" / "cancel" never goes to the AI.
     if (STOP_WORDS.test(text)) { if (!cancelTask()) addMsg('tool', 'NOTHING TO STOP'); return; }
+    // "What's on my screen?" / "What do you see?": take a look first.
+    const lookWhat = LOOK_SCREEN.test(text) ? 'screen' : LOOK_CAMERA.test(text) ? 'camera' : null;
+    if (lookWhat) return lookAndAnswer(lookWhat, text);
     // A new request while he's still working replaces the old one.
     if (state.busy) cancelTask({ silent: true });
     unlockAudio();
@@ -319,6 +382,7 @@
       setTimeout(() => { if (document.body.dataset.mode === 'error') setMode('idle'); }, 2500);
       return;
     }
+    if (r.usedBy) renderAiChip(r.usedBy);
     state.history.push({ role: 'assistant', content: r.reply });
     if (state.history.length > 60) state.history = state.history.slice(-40);
     if (!el) {
@@ -366,7 +430,7 @@
         if (!line.trim()) continue;
         let m; try { m = JSON.parse(line); } catch { continue; }
         if (m.t === 'token') onToken(m.v);
-        else if (m.t === 'done') result = { reply: m.reply, actions: m.actions };
+        else if (m.t === 'done') result = { reply: m.reply, actions: m.actions, usedBy: m.usedBy };
         else if (m.t === 'error') result = { error: m.error, actions: m.actions };
       }
     }
@@ -1013,6 +1077,7 @@
     } else if (ev === 'reminders') renderReminders(data);
     else if (ev === 'reminder-error') sys('Reminder text/call failed: ' + data.message);
     else if (ev === 'tasks') renderTasks(data);
+    else if (ev === 'brain') window.brainMap?.refresh();
     else if (ev === 'apple' && data.connected) { sys('✓ Apple Music connected. Try "play some Drake on Apple Music".'); refreshApple(); }
     else if (ev === 'ollama' && state.local) {
       const msg = data.error ? 'Unlimited AI setup failed: ' + data.error : data.done ? '✓ Unlimited AI is ready on this PC' : `Downloading the AI… ${data.progress}%`;
@@ -1079,6 +1144,7 @@
     state.settings = await api('/settings');
     const s = state.settings;
     applyName();
+    renderAiChip();
     $('#provider-label').textContent = `${s.providerName || s.provider} · ${s.models[s.provider] || ''}`;
     return s;
   }
@@ -1125,6 +1191,9 @@
     F('ollamaUrl').value = s.ollamaUrl || '';
     refreshFast();
     refreshMail();
+    brainFolders = [...(s.brain?.folders || [])];
+    renderBrainFolders();
+    refreshCal();
     F('assistantName').value = s.assistantName || 'Jarvis';
     F('userName').value = s.userName || '';
     F('namePronounce').value = s.namePronounce || '';
@@ -1382,6 +1451,131 @@
     btn.textContent = 'Test voice';
     state.muted = wasMuted;
     state.settings.voice = prev;
+  };
+
+  // ---- AI brain chip: shows which AI answers; click to switch (incl. 100% local)
+  const shortModel = m => String(m || '').split('/').pop().replace(/:latest$/, '').slice(0, 26);
+  function renderAiChip(usedBy) {
+    const s = state.settings || {};
+    const chip = $('#ai-chip');
+    const local = s.aiMode === 'local';
+    chip.classList.toggle('local', local);
+    let label;
+    if (local) label = `🔒 LOCAL · ${shortModel(s.models?.ollama || 'llama3.1')}`;
+    else if (s.provider === 'free') label = 'FREE AI' + (usedBy ? ` · ${shortModel(usedBy.model)}` : '');
+    else label = `${s.providerName || s.provider} · ${shortModel(s.models?.[s.provider])}`;
+    chip.textContent = `● ${label} ▾`;
+  }
+  async function openAiMenu() {
+    const menu = $('#ai-menu');
+    if (!menu.hidden) { menu.hidden = true; return; }
+    if (!state.local) { sys('The AI brain is chosen on the main computer.'); return; }
+    menu.hidden = false;
+    menu.innerHTML = '<h5>LOADING…</h5>';
+    const b = await api('/brains').catch(() => null);
+    if (!b) { menu.hidden = true; return; }
+    const cur = b.current;
+    const item = (on, label, sub, data) => `<button type="button" class="${on ? 'on' : ''}" data-b='${esc(JSON.stringify(data))}'>${esc(label)}<small>${esc(sub)}</small></button>`;
+    let html = '<h5>ONLINE (FREE)</h5>' + item(cur.aiMode !== 'local' && cur.provider === 'free', 'Free AI (automatic)', 'Fastest free AIs, switches when one is busy', { mode: 'free' });
+    if (b.paid.length) html += '<h5>YOUR AI ACCOUNTS</h5>' + b.paid.map(p => item(cur.aiMode !== 'local' && cur.provider === p.provider, p.name, p.model, { mode: 'provider', provider: p.provider })).join('');
+    html += '<h5>🔒 100% ON THIS COMPUTER</h5>';
+    html += b.local.length
+      ? b.local.map(m => item(cur.aiMode === 'local' && cur.localModel === m, shortModel(m), 'Private: nothing you say leaves this computer', { mode: 'local', model: m })).join('')
+      : item(false, 'Set up local AI…', 'Free, private, no limits (needs Ollama)', { mode: 'setup' });
+    menu.innerHTML = html;
+  }
+  $('#ai-chip').onclick = openAiMenu;
+  $('#ai-menu').onclick = async e => {
+    const btn = e.target.closest('button[data-b]');
+    if (!btn) return;
+    const choice = JSON.parse(btn.dataset.b);
+    $('#ai-menu').hidden = true;
+    if (choice.mode === 'setup') return openSettings('ai');
+    await api('/brains', { method: 'POST', body: choice });
+    await loadSettings();
+    renderAiChip();
+    sys(choice.mode === 'local' ? `🔒 Local mode: I'm now thinking with ${shortModel(choice.model)} on this computer. Nothing you say leaves it (web searches still use the internet).` : 'AI brain switched.');
+  };
+  document.addEventListener('click', e => { if (!e.target.closest('.ai-chip-row')) $('#ai-menu').hidden = true; });
+
+  // ---- Calendar: connect a private iCal link
+  const CAL_GUIDES = {
+    google: { button: 'Open Google Calendar settings ↗', url: 'https://calendar.google.com/calendar/u/0/r/settings',
+      how: '<b>On the left</b>, under "Settings for my calendars", click your calendar\'s name. Scroll down to <b>"Integrate calendar"</b> and copy <b>"Secret address in iCal format"</b>.' },
+    apple: { button: 'Open iCloud Calendar ↗', url: 'https://www.icloud.com/calendar/',
+      how: 'Sign in, then click the <b>share icon</b> next to your calendar on the left. Turn on <b>"Public Calendar"</b> and press <b>Copy Link</b>.' },
+    outlook: { button: 'Open Outlook calendar sharing ↗', url: 'https://outlook.live.com/calendar/0/options/calendar/SharedCalendars',
+      how: 'Under <b>"Publish a calendar"</b>, pick your calendar and <b>"Can view all details"</b>, press <b>Publish</b>, then copy the <b>ICS</b> link.' },
+  };
+  let calKind = 'google';
+  function refreshCal() {
+    const on = !!state.settings?.hasKey?.calendar;
+    $('#cal-status').textContent = on ? '✓ Calendar connected. Ask "what\'s on my calendar this week?"' : 'Not connected yet. Pick your calendar below.';
+    $('#cal-status').className = 'fast-status' + (on ? ' good' : '');
+    $('#cal-disconnect').hidden = !on;
+  }
+  $$('.cal-kinds button').forEach(b => {
+    b.onclick = () => {
+      calKind = b.dataset.kind;
+      $$('.cal-kinds button').forEach(x => x.classList.toggle('primary', x === b));
+      const g = CAL_GUIDES[calKind];
+      $('#cal-open').textContent = g.button;
+      $('#cal-open').onclick = () => openLink(g.url);
+      $('#cal-how').innerHTML = g.how;
+      $('#cal-steps').hidden = false;
+    };
+  });
+  $('#cal-connect').onclick = async () => {
+    const out = $('#cal-result');
+    out.className = 'hint';
+    out.textContent = 'Checking the link…';
+    const r = await api('/calendar/connect', { method: 'POST', body: { url: $('#cal-link').value, kind: calKind } }).catch(e => ({ error: e.message }));
+    if (!r.ok) { out.textContent = r.error; out.className = 'hint bad'; return; }
+    $('#cal-link').value = '';
+    out.textContent = `✓ Connected! Found ${r.events} events.`;
+    out.className = 'hint good';
+    await loadSettings();
+    refreshCal();
+    sys('📅 Calendar connected. Try "what\'s on my calendar today?"');
+  };
+  $('#cal-disconnect').onclick = async () => { await api('/calendar/disconnect', { method: 'POST' }); await loadSettings(); refreshCal(); };
+
+  // ---- Second Brain: map + folders
+  window.brainMap?.init({
+    get: p => api(p),
+    post: p => api(p, { method: 'POST' }),
+    ask: text => ask(text),
+  });
+  $('#brain-btn').onclick = () => {
+    if (window.brainMap.isOpen) window.brainMap.close(); else window.brainMap.open();
+    $('#brain-btn').classList.toggle('on', window.brainMap.isOpen);
+  };
+  $('#brain-open-map').onclick = () => { $('#settings').close(); window.brainMap.open(); $('#brain-btn').classList.add('on'); };
+  let brainFolders = [];
+  function renderBrainFolders() {
+    $('#brain-folders').innerHTML = `<li><span>📁 Documents\\Jarvis (always included)</span></li>` +
+      brainFolders.map((f, i) => `<li><span>📁 ${esc(f)}</span><button type="button" data-i="${i}">Remove</button></li>`).join('');
+  }
+  async function saveBrainFolders() {
+    await api('/settings', { method: 'POST', body: { brain: { folders: brainFolders } } });
+    await api('/brain/rebuild', { method: 'POST' }).catch(() => {});
+    renderBrainFolders();
+  }
+  $('#brain-folders').onclick = e => {
+    const b = e.target.closest('button[data-i]');
+    if (b) { brainFolders.splice(Number(b.dataset.i), 1); saveBrainFolders(); }
+  };
+  $('#brain-folder-add').onclick = () => {
+    const f = $('#brain-folder-input').value.trim();
+    if (!f) return;
+    if (!brainFolders.includes(f)) brainFolders.push(f);
+    $('#brain-folder-input').value = '';
+    saveBrainFolders();
+  };
+  $('#brain-folder-pick').hidden = !desk?.pickFolder;
+  $('#brain-folder-pick').onclick = async () => {
+    const f = await desk.pickFolder();
+    if (f && !brainFolders.includes(f)) { brainFolders.push(f); saveBrainFolders(); }
   };
 
   // ---- Email: guided setup (address -> provider's app-password page -> paste & test)

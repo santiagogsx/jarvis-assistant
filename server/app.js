@@ -16,6 +16,7 @@ const { createPiper } = require('./piper');
 const { createVoskModels } = require('./voskmodels');
 const { createBrowser } = require('./browser');
 const { createTrading } = require('./trading');
+const { createBrain } = require('./brain');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const MIME = {
@@ -35,6 +36,8 @@ Your replies are read aloud, so:
 - Always reply in the language the person writes or speaks to you in.
 - Spoken requests are transcribed by speech recognition and may contain mis-heard words; work out what they most likely meant from context (accents, names, homophones) instead of taking odd words literally.
 You can act through tools: weather, web research, news, email, music, reminders, notes, social media, shopping, texting/calling the owner's phone, opening sites and apps.
+- Calendar: for schedule questions and every morning briefing / "good morning", call calendar_events and read the day back naturally ("Monday's got three items, sir: …"). add_calendar_event only prepares the event; the person taps Save.
+- Second Brain: before answering anything about the person's own life, business, projects, people, plans, notes or files, call search_brain and answer from what it finds (say which note/file). When they share something worth keeping or say "remember", call remember.
 - Phone: text_me / call_me reach only the owner's own phone. For "call me in 20 minutes" use set_reminder with deliver=call.
 - Tasks: keep the to-do list with add_task/list_tasks/complete_task. For anything that should happen automatically at a time or on repeat ("every morning at 8, text me the weather"), use schedule_routine with a clear instruction. create_file writes documents into the Jarvis folder in Documents.
 - Multi-step requests: break them into steps and use as many tools as needed, then report what you did.
@@ -95,8 +98,9 @@ async function startServer({ store, port, host, notify }) {
   const music = createMusic(store, browser);
   const piper = createPiper(store.dataDir, message => broadcast('voice-setup', { message }));
   const voskModels = createVoskModels(store.dataDir, message => broadcast('voice-setup', { message }));
+  const brain = createBrain({ dataDir: store.dataDir, getSettings: store.get });
   const tools = createTools({
-    dataDir: store.dataDir, music, browser, trading: createTrading(store.get), broadcast, notify, getSettings: store.get, runRoutine,
+    dataDir: store.dataDir, music, browser, brain, trading: createTrading(store.get), broadcast, notify, getSettings: store.get, runRoutine,
     sitesUrl: () => `http://127.0.0.1:${currentPort}`,
   });
 
@@ -167,6 +171,29 @@ async function startServer({ store, port, host, notify }) {
         if (out.remote.enabled !== before) setTimeout(rebind, 200);
         return;
       }
+      case 'POST /api/vision': {
+        // Eyes: a screenshot/camera photo plus a question.
+        const b = JSON.parse((await readBody(req, 12_000_000)).toString() || '{}');
+        try { return send(res, 200, await require('./vision').look(store.get(), b)); } catch (e) { return send(res, 200, { error: e.message }); }
+      }
+      case 'POST /api/calendar/connect': {
+        // Check the private iCal link really is a calendar, then save it.
+        if (ownerOnly()) return;
+        const b = await json();
+        const link = String(b.url || '').trim();
+        if (!/^(https|webcal):\/\//i.test(link)) return send(res, 200, { ok: false, error: 'Paste the whole link: it starts with https:// or webcal://' });
+        try {
+          const t = await require('./calendar').test(link);
+          const s = store.get();
+          const existing = String(s.keys.calendar || '').split(/\s+/).filter(Boolean).filter(u => u !== link);
+          store.update({ keys: { calendar: [...existing, link].join(' ') }, calendar: { kind: ['google', 'apple', 'outlook'].includes(b.kind) ? b.kind : 'google' } });
+          return send(res, 200, { ok: true, events: t.events, count: existing.length + 1 });
+        } catch (e) { return send(res, 200, { ok: false, error: e.message }); }
+      }
+      case 'POST /api/calendar/disconnect':
+        if (ownerOnly()) return;
+        store.setSecret('calendar', '');
+        return send(res, 200, { ok: true });
       case 'GET /api/email/detect':
         if (ownerOnly()) return;
         try { return send(res, 200, await email.detect(url.searchParams.get('address'))); } catch (e) { return send(res, 200, { error: e.message }); }
@@ -233,14 +260,16 @@ async function startServer({ store, port, host, notify }) {
         // "Stop": the app drops the connection, and everything still running here halts.
         const cancel = new AbortController();
         res.on('close', () => { if (!res.writableFinished) cancel.abort(); });
+        let usedBy = null;
         try {
           const reply = await chat({
             signal: cancel.signal,
+            onUsed: (provider, model) => { usedBy = { provider, name: NAMES[provider] || provider, model }; },
             settings: s, history, systemPrompt: systemPrompt(s, local), toolDefs,
             runTool: (name, args) => { broadcastTo(res, name); if (stream) write({ t: 'tool', name }); return tools.run(name, args, ctx); },
             onToken: stream ? text => write({ t: 'token', v: text }) : undefined,
           });
-          const out = { reply: reply || `Done, ${s.userTitle}.`, actions };
+          const out = { reply: reply || `Done, ${s.userTitle}.`, actions, usedBy };
           if (stream) { write({ t: 'done', ...out }); return res.end(); }
           return send(res, 200, out);
         } catch (e) {
@@ -255,6 +284,27 @@ async function startServer({ store, port, host, notify }) {
         const s = store.get();
         if (preview && local) s.voice = { ...s.voice, ...preview };
         try { return send(res, 200, await voice.tts(text, s, piper)); } catch (e) { return send(res, 200, { error: e.message }); }
+      }
+      case 'GET /api/brains': {
+        // Choices for the AI-brain chip under the orb.
+        const s = store.get();
+        const base = (s.ollamaUrl || 'http://localhost:11434/v1').replace(/\/v1\/?$/, '');
+        let local = [];
+        try { local = ((await (await fetch(base + '/api/tags', { signal: AbortSignal.timeout(1500) })).json()).models || []).map(m => m.name); } catch {}
+        const paid = ['openai', 'anthropic', 'grok', 'gemini', 'openrouter', 'groq', 'mistral', 'cerebras']
+          .filter(p => s.keys[p]).map(p => ({ provider: p, name: NAMES[p] || p, model: s.models[p] || '' }));
+        return send(res, 200, { current: { provider: s.provider, aiMode: s.aiMode, model: s.models[s.provider] || '', localModel: s.models.ollama || 'llama3.1' }, local, paid });
+      }
+      case 'POST /api/brains': {
+        if (ownerOnly()) return;
+        const b = await json();
+        const s = store.get();
+        const patch = { aiMode: b.mode === 'local' ? 'local' : 'normal' };
+        if (b.mode === 'local' && b.model) patch.models = { ...s.models, ollama: String(b.model) };
+        if (b.mode === 'free') patch.provider = 'free';
+        if (b.mode === 'provider' && b.provider) patch.provider = String(b.provider);
+        store.update(patch);
+        return send(res, 200, { ok: true });
       }
       case 'GET /api/ollama/status': {
         const base = (store.get().ollamaUrl || 'http://localhost:11434/v1').replace(/\/v1\/?$/, '');
@@ -293,6 +343,16 @@ async function startServer({ store, port, host, notify }) {
         })().catch(e => broadcast('ollama', { error: e.message }));
         return;
       }
+      // ---- Second Brain (map view + inspector)
+      case 'GET /api/brain/graph':
+        try { return send(res, 200, brain.graph()); } catch (e) { return send(res, 200, { nodes: [], links: [], error: e.message }); }
+      case 'GET /api/brain/node':
+        return send(res, 200, brain.node(url.searchParams.get('id') || '') || { error: 'Not found' });
+      case 'GET /api/brain/search':
+        return send(res, 200, { results: brain.search(url.searchParams.get('q') || '', 12) });
+      case 'POST /api/brain/rebuild':
+        brain.rebuild();
+        return send(res, 200, { ok: true, folders: brain.sourceFolders() });
       case 'GET /api/voices': return send(res, 200, { piper: piper.supported ? piper.voices() : [] });
       case 'GET /api/stt-model': {
         // Which offline speech model the app should use for commands (downloads it if needed).

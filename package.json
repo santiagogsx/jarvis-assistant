@@ -1,7 +1,7 @@
 {
   "name": "jarvis-assistant",
   "productName": "Jarvis",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "An Iron Man style AI assistant for desktop and phone that works with ChatGPT, Claude, Grok, Gemini, Ollama and more.",
   "main": "main.js",
   "author": "Ricardo Santiago",
@@ -75,7 +75,8 @@
       "identity": "-",
       "category": "public.app-category.productivity",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Jarvis listens to your voice when you press the microphone button."
+        "NSMicrophoneUsageDescription": "Jarvis listens to your voice when you press the microphone button.",
+        "NSCameraUsageDescription": "Jarvis looks through the camera only when you ask him what he sees."
       }
     },
     "linux": {

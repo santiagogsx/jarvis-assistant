@@ -29,6 +29,11 @@ What you can ask it:
 | "Find me AirPods under $150" / "Order the second one" | Compares Amazon, eBay, Walmart… and puts the item in your Amazon cart or opens the product page. **You** place the order |
 | "Text me the grocery list" / "Call me in 20 minutes to wake me up" | Texts or calls **your own** phone (Twilio) |
 | "Write a TikTok caption about my new shoes" | Opens a pre-filled post on X, LinkedIn, Threads, Bluesky, WhatsApp… or copies it for Instagram/TikTok. **You** press Post |
+| "Remember my gym days are Mon/Wed/Fri" / "What do I have in my notes about the game?" | **Second Brain**: saves facts, searches your notes and folders, shown as a glowing map (🧠 button) |
+| "What's on my calendar this week?" / "Add dentist Friday 3pm" | Reads Google/iCloud/Outlook calendars (private iCal link); new events open filled in for you to save |
+| "What's on my screen?" / "What do you see?" | **Eyes** (👁): looks at your screen or through the camera |
+| "How was igloo.inc made?" | Reverse-engineers a website's tech (3D, animation libraries, frameworks, fonts, colours) |
+| Chip under the orb | Switch AI brains, including **🔒 Local only**: an AI running on your PC, nothing leaves it |
 | "Remind me in 10 minutes to check the oven" | Pop-up + spoken reminder (or a text/call) |
 | "What's the weather?" / "Top news?" / "Take a note…" / "Open calculator" | Done |
 
